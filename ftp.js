@@ -16,7 +16,7 @@ var FTP = module.exports = function(options) {
         host: 'localhost',
         port: 21,
         /*secure: false,*/
-        connTimeout: 15000, // in ms
+        connTimeout: 10000, // in ms
         debug: false/*,
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
@@ -69,6 +69,12 @@ util.inherits(FTP, EventEmitter);
             clearTimeout(connTimeout);
             if (debug)
                 debug('Connected');
+        });
+        socket.on('timeout', function(err) {
+            if (debug)
+                debug('Socket timeout');
+            this.emit('close');
+            self.emit('timeout', new Error('The connection to the server timed out'));
         });
         socket.on('end', function() {
             if (debug)
@@ -225,6 +231,7 @@ util.inherits(FTP, EventEmitter);
                 }
             };
         
+        this.emit('auth');
         next(null, true);
         return true;
     };
