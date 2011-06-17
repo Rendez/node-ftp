@@ -1,5 +1,5 @@
-var util = require('util'),
-    net = require('net'),
+var Util = require('util'),
+    Net = require('net'),
     EventEmitter = require('events').EventEmitter,
     
     debug = function() { console.log('>>',arguments); };
@@ -26,7 +26,7 @@ var FTP = module.exports = function(options) {
         debug = this.options.debug;
 };
 
-util.inherits(FTP, EventEmitter);
+Util.inherits(FTP, EventEmitter);
 
 (function() {
     var XRegExp = require('./xregexp'),
@@ -62,7 +62,7 @@ util.inherits(FTP, EventEmitter);
             self.emit('timeout');
         }, this.options.connTimeout);
         
-        socket = this.$socket = net.createConnection(port, host);
+        socket = this.$socket = Net.createConnection(port, host);
         socket.setEncoding('utf8');
         socket.setTimeout(0);
         socket.on('connect', function() {
@@ -105,7 +105,7 @@ util.inherits(FTP, EventEmitter);
                 if (debug) {
                     for (var i=0, len=resps.length; i < len; ++i)
                         debug('Response: code = ' + resps[i][0]
-                            + (resps[i][1] ? '; text = ' + util.inspect(resps[i][1]) : ''));
+                            + (resps[i][1] ? '; text = ' + Util.inspect(resps[i][1]) : ''));
                 }
 
                 for (var i=0, code, text, group, len = resps.length; i < len; ++i) {
@@ -129,7 +129,7 @@ util.inherits(FTP, EventEmitter);
                                             self.$feat[feats[i].toUpperCase()] = true;
                                     }
                                     if (debug)
-                                        debug('Features: ' + util.inspect(self.$feat));
+                                        debug('Features: ' + Util.inspect(self.$feat));
                                     self.emit('feat', self.$feat);
                                 }
                                 self.emit('connect');
@@ -254,33 +254,45 @@ util.inherits(FTP, EventEmitter);
         return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
+                
+            var buffer;
+            stream.on('data', function(chunk) {
+                buffer = new Buffer(chunk);
+            });
 
             var result = self.send('RETR', path, function(err) {
                 if (err)
-                    return stream.emit('error', err);
+                    return callback(err);
                 
-                stream.emit('success');
+                callback(null, buffer);
             });
-            if (result)
-                callback(undefined, stream);
-            else
+            if (!result)
                 callback(new Error('Connection severed'));
         });
     };
-    this.put = function(instream, destpath, callback) {
-        if (this.$state !== 'authorized' || !instream.readable)
+    this.put = function(buffer, destpath, callback) {
+        if (this.$state !== 'authorized' || !stream.readable)
             return false;
 
-        instream.pause();
+        if (!Buffer.isBuffer(buffer))
+            throw new Error('Write data must be an instance of Buffer');
 
         var self = this;
-        return this.send('PASV', function(err, outstream) { // net.createConnection :: out-stream coming from FTP conn.
+        return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
 
             var result = self.send('STOR', destpath, callback);
-            if (result)
-                instream.pipe(outstream);
+            if (result) {
+                if (stream.writable) {
+                    stream.write(buffer);
+                    stream.on('end', function() {
+                        callback(this.bytesWritten !== buffer.length)
+                    });
+                }
+                else
+                    callback(new Error('Stream not writable'));
+            }
             else
                 callback(new Error('Connection severed'));
         });
@@ -292,13 +304,13 @@ util.inherits(FTP, EventEmitter);
         instream.pause();
 
         var self = this;
-        return this.send('PASV', function(err, outstream) {
+        return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
 
             var result = self.send('APPE', destpath, callback);
             if (result)
-                instream.pipe(outstream);
+                instream.pipe(stream);
             else
                 callback(new Error('Connection severed'));
         });
@@ -407,7 +419,7 @@ util.inherits(FTP, EventEmitter);
             });
             emitter.on('error', function(err) { // Under normal circumstances this shouldn't happen.
                 self.$socket.end();
-                callback('Error during LIST(): ' + util.inspect(err));
+                callback('Error during LIST(): ' + Util.inspect(err));
             });
             emitter.on('success', function() {
                 callback(null, nodes);
@@ -422,8 +434,8 @@ util.inherits(FTP, EventEmitter);
         
         if (root.charAt(0) != "/") {
             this.pwd(function(err, pwd) {
-                if (err)
-                    return callback(err);
+                if (err || !pwd)
+                    return callback(err || pwd);
                 pwd = pwd.replace(/[\/]+$/, "");
                 root = pwd + "/" + root.replace(/^[\/]+/, "");
                 afterPwd();
@@ -447,7 +459,7 @@ util.inherits(FTP, EventEmitter);
                 });
                 emitter.on('error', function(err) { // Under normal circumstances this shouldn't happen.
                     self.$socket.end();
-                    callback('Error during LIST(): ' + util.inspect(err));
+                    callback('Error during LIST(): ' + Util.inspect(err));
                 });
                 emitter.on('success', function() {
                     if (list.length === 0)
@@ -627,7 +639,7 @@ util.inherits(FTP, EventEmitter);
         return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
-            else if (!emitter || typeof stream !== 'object')
+            else if (!emitter || !stream.setEncoding)
                 return emitter.emit('error', new Error('Connection severed'));
             
             var curData = '', lines;
@@ -679,7 +691,7 @@ util.inherits(FTP, EventEmitter);
         if (debug)
             debug('(PASV) About to attempt data connection to: ' + this.$pasvIP + ':' + this.$pasvPort);
         // Create new passive stream.
-        this.$dataSock = net.createConnection(this.$pasvPort, this.$pasvIP);
+        this.$dataSock = Net.createConnection(this.$pasvPort, this.$pasvIP);
 
         this.$dataSock.on('connect', function() {
             clearTimeout(pasvTimeout);
