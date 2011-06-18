@@ -91,6 +91,10 @@ Util.inherits(FTP, EventEmitter);
         });
         socket.on('error', function(err) {
             self.emit('error', err);
+            if (err.message && err.message.indexOf('ECONNRESET') > -1) {
+                //self.$executeNext();
+                return self.connect();
+            }
         });
         socket.on('data', function(data) {
             curData += data;
@@ -255,23 +259,23 @@ Util.inherits(FTP, EventEmitter);
             if (err)
                 return callback(err);
                 
-            var buffer;
+            var buffer = [];
             stream.on('data', function(chunk) {
-                buffer = new Buffer(chunk);
+                buffer.push(chunk);
             });
 
             var result = self.send('RETR', path, function(err) {
                 if (err)
                     return callback(err);
                 
-                callback(null, buffer);
+                callback(null, new Buffer(buffer.join('')));
             });
             if (!result)
                 callback(new Error('Connection severed'));
         });
     };
     this.put = function(buffer, destpath, callback) {
-        if (this.$state !== 'authorized' || !stream.readable)
+        if (this.$state !== 'authorized')
             return false;
 
         if (!Buffer.isBuffer(buffer))
@@ -281,37 +285,32 @@ Util.inherits(FTP, EventEmitter);
         return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
-
-            var result = self.send('STOR', destpath, callback);
-            if (result) {
-                if (stream.writable) {
-                    stream.write(buffer);
-                    stream.on('end', function() {
-                        callback(this.bytesWritten !== buffer.length)
-                    });
-                }
-                else
-                    callback(new Error('Stream not writable'));
-            }
-            else
+            
+            var res = self.send('STOR', destpath, callback);
+            stream.write(buffer, function() {
+                stream._shutdown();
+            });
+            if (!res)
                 callback(new Error('Connection severed'));
         });
     };
-    this.append = function(instream, destpath, callback) {
-        if (this.$state !== 'authorized' || !instream.readable)
+    this.append = function(buffer, destpath, callback) {
+        if (this.$state !== 'authorized')
             return false;
 
-        instream.pause();
+        if (!Buffer.isBuffer(buffer))
+            throw new Error('Write data must be an instance of Buffer');
 
         var self = this;
         return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
-
-            var result = self.send('APPE', destpath, callback);
-            if (result)
-                instream.pipe(stream);
-            else
+            
+            var res = self.send('APPE', destpath, callback);
+            stream.write(buffer, function() {
+                stream._shutdown();
+            });
+            if (!res)
                 callback(new Error('Connection severed'));
         });
     };
@@ -359,6 +358,15 @@ Util.inherits(FTP, EventEmitter);
         this.name   = struct.name;
         this.rights = struct.rights;
 
+        this.getLastMod = function() {
+            var joinDateArr = [], joinTimeArr = [];
+            for (var d in struct.date)
+                joinDateArr.push(struct.date[d]);
+            for (var t in struct.time)
+                joinTimeArr.push(struct.time[t]);
+            
+            return new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':'));
+        };
         /**
         * @type {Boolean}
         */
@@ -599,7 +607,7 @@ Util.inherits(FTP, EventEmitter);
             for (var t in time)
                 joinTimeArr.push(time[t]);
             
-            var mdtm = new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':'))
+            var mdtm = new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':'));
             callback(undefined, mdtm);
         });
     };
@@ -710,6 +718,7 @@ Util.inherits(FTP, EventEmitter);
         this.$dataSock.on('error', function(err) {
             if (debug)
                 debug('(PASV) Error: ' + err);
+            
             self.$executeNext(err);
             self.$dataSock = self.$pasvPort = self.$pasvIP = null;
         });
