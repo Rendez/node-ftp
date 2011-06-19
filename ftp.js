@@ -1,7 +1,7 @@
 var Util = require('util'),
     Net = require('net'),
     EventEmitter = require('events').EventEmitter,
-    
+    Parser = require('./ftp_parser'),
     debug = function() { console.log('>>',arguments); };
 
 var FTP = module.exports = function(options) {
@@ -29,11 +29,12 @@ var FTP = module.exports = function(options) {
 Util.inherits(FTP, EventEmitter);
 
 (function() {
-    var XRegExp = require('./xregexp'),
-        reXListUnix = XRegExp.cache('^(?<type>[\\-ld])(?<permission>([\\-r][\\-w][\\-xs]){3})\\s+(?<inodes>\\d+)\\s+(?<owner>\\w+)\\s+(?<group>\\w+)\\s+(?<size>\\d+)\\s+(?<timestamp>((?<month1>\\w{3})\\s+(?<date1>\\d{1,2})\\s+(?<hour>\\d{1,2}):(?<minute>\\d{2}))|((?<month2>\\w{3})\\s+(?<date2>\\d{1,2})\\s+(?<year>\\d{4})))\\s+(?<name>.+)$'),
-        reXListMSDOS = XRegExp.cache('^(?<month>\\d{2})(?:\\-|\\/)(?<date>\\d{2})(?:\\-|\\/)(?<year>\\d{2,4})\\s+(?<hour>\\d{2}):(?<minute>\\d{2})\\s{0,1}(?<ampm>[AaMmPp]{1,2})\\s+(?:(?<size>\\d+)|(?<isdir>\\<DIR\\>))\\s+(?<name>.+)$'),
-        reXTimeval = XRegExp.cache('^(?<year>\\d{4})(?<month>\\d{2})(?<date>\\d{2})(?<hour>\\d{2})(?<minute>\\d{2})(?<second>\\d+)$'),
-        reKV = /(.+?)=(.+?);/;
+    function makeError(code, text) {
+        var err = new Error('Server Error: ' + code + (text ? ' ' + text : ''));
+        err.code = code;
+        err.text = text;
+        return err;
+    }
     
     this.end = function() {
         if (this.$socket)
@@ -99,7 +100,7 @@ Util.inherits(FTP, EventEmitter);
         socket.on('data', function(data) {
             curData += data;
             if (/(?:\r\n|\n)$/.test(curData)) {
-                var resps = FtpHelpers.parseResponses(curData.split(/\r\n|\n/)),
+                var resps = Parser.parseResponses(curData.split(/\r\n|\n/)),
                     processNext = false;
                 
                 if (resps.length === 0)
@@ -115,7 +116,7 @@ Util.inherits(FTP, EventEmitter);
                 for (var i=0, code, text, group, len = resps.length; i < len; ++i) {
                     code = resps[i][0];
                     text = resps[i][1];
-                    group = FtpHelpers.getGroup(code); // second digit
+                    group = Parser.getGroup(code); // second digit
 
                     if (!self.$state) {
                         if (code === 220) {
@@ -136,7 +137,7 @@ Util.inherits(FTP, EventEmitter);
                                         debug('Features: ' + Util.inspect(self.$feat));
                                     self.emit('feat', self.$feat);
                                 }
-                                self.emit('connect');
+                                self.emit('connect', self.options.host, self.options.port);
                             });
                         } else {
                              self.emit('error', new Error('Did not receive service ready response'));
@@ -154,13 +155,13 @@ Util.inherits(FTP, EventEmitter);
                         if (code === 200)
                             self.$executeNext();
                         else
-                            self.$executeNext(FtpHelpers.makeError(code, text));
+                            self.$executeNext(makeError(code, text));
                     } else if (group === 1) {
                         // informational group
                         if (code >= 211 && code <= 215)
                             self.$executeNext(text);
                         else
-                            self.$executeNext(FtpHelpers.makeError(code, text));
+                            self.$executeNext(makeError(code, text));
                     } else if (group === 2) {
                         // control/data connection-related
                         if (code === 226) {
@@ -176,13 +177,13 @@ Util.inherits(FTP, EventEmitter);
                             self.$pasvConnect();
                             return;
                         } else
-                            self.$executeNext(FtpHelpers.makeError(code, text));
+                            self.$executeNext(makeError(code, text));
                     } else if (group === 3) {
                         // authentication-related
                         if (code === 331 || code === 230)
                             self.$executeNext((code === 331));
                         else
-                            self.$executeNext(FtpHelpers.makeError(code, text));
+                            self.$executeNext(makeError(code, text));
                         } else if (group === 5) { // group 4 is unused
                             // server file system state
                             if (code === 250 && self.$queue[0][0] === 'MLST')
@@ -197,7 +198,7 @@ Util.inherits(FTP, EventEmitter);
                                     path = text;
                                 self.$executeNext(path);
                             } else
-                                self.$executeNext(FtpHelpers.makeError(code, text));
+                                self.$executeNext(makeError(code, text));
                         }
                         if (processNext)
                             self.send();
@@ -513,7 +514,7 @@ Util.inherits(FTP, EventEmitter);
         lines.shift();
         lines.pop();
         lines.pop();
-        result = FtpHelpers.parseMList(lines[0]);
+        result = Parser.parseMList(lines[0]);
         emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
         emitter.emit('end');
         emitter.emit('success');
@@ -572,13 +573,16 @@ Util.inherits(FTP, EventEmitter);
     this.chmod = function(path, mode, callback) {
         return (this.$state !== 'authorized')
             ? false
-            : this.send('CHMOD', [mode, path].join(' '), callback);
+            : this.send('SITE CHMOD', [mode, path].join(' '), callback);
     };
     this.size = function(path, callback) {
       return (this.$state !== 'authorized' || !this.$feat['SIZE'])
         ? false
         : this.send('SIZE', path, callback);
     };
+    
+    var reXTimeval = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d+)$/;
+    
     this.lastMod = function(path, callback) {
         if (this.$state !== 'authorized' || !this.$feat['MDTM'])
             return false;
@@ -592,14 +596,14 @@ Util.inherits(FTP, EventEmitter);
                 return callback(new Error('Invalid date/time format from server'));
                 
             var date = {
-                year: parseInt(val.year, 10),
-                month: parseInt(val.month, 10),
-                date: parseInt(val.date, 10)
+                year: parseInt(val[1], 10),
+                month: parseInt(val[2], 10),
+                date: parseInt(val[3], 10)
             };
             var time = {
-                hour: parseInt(val.hour, 10),
-                minute: parseInt(val.minute, 10),
-                second: parseFloat(val.second, 10)
+                hour: parseInt(val[4], 10),
+                minute: parseInt(val[5], 10),
+                second: parseFloat(val[6], 10)
             };
             var joinDateArr = [], joinTimeArr = [];
             for (var d in date)
@@ -631,6 +635,8 @@ Util.inherits(FTP, EventEmitter);
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
+                
+            this.emit('command', params ? [cmd].concat(params) : [cmd]);
         }
         
         if (this.$queue.length) { 
@@ -666,7 +672,11 @@ Util.inherits(FTP, EventEmitter);
                         lines = curData.substring(0, pos).split(/\r\n|\n/);
                         curData = curData.substring(pos + 1);
                     }
-                    FtpHelpers.processDirLines(lines, emitter, type);
+                    for (var results = Parser.processDirLines(lines, type), i = 0; i < results.length; i++) {
+                        if (debug)
+                            debug('(PASV) Got ' + type + ' line: ' + results[i][2]);
+                        emitter.emit(results[i][0]/*event*/, results[i][1]/*result*/);
+                    }
                 }
             });
             stream.on('end', function() {
@@ -745,147 +755,6 @@ Util.inherits(FTP, EventEmitter);
             });
         } else
             process.nextTick(callback);
-    };
-    /** Helper functions */
-    var FtpHelpers = {
-        processDirLines: function(lines, emitter, type) {
-            for (var i=0,result,len=lines.length; i<len; ++i) {
-                if (lines[i].length) {
-                    if (debug)
-                        debug('(PASV) Got ' + type + ' line: ' + lines[i]);
-                    if (type === 'LIST')
-                        result = FtpHelpers.parseList(lines[i]);
-                    else if (type === 'MLSD')
-                        result = FtpHelpers.parseMList(lines[i], numFields);
-
-                    emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
-                }
-            }
-        },
-        parseResponses: function(lines) {
-            var responses = [],
-                multiline = '';
-
-            for (var i=0, match, len=lines.length; i < len; ++i) {
-                if (match = lines[i].match(/^(\d{3})(?:$|(\s|\-)(.+))/)) {
-                    if (match[2] === '-') {
-                        if (match[3])
-                            multiline += match[3] + '\n';
-                        continue;
-                    } else
-                        match[3] = (match[3] ? multiline + match[3] : multiline);
-
-                    if (match[3].length)
-                        responses.push([parseInt(match[1]), match[3]]);
-                    else
-                        responses.push([parseInt(match[1])]);
-                    multiline = '';
-                } else
-                    multiline += lines[i] + '\n';
-            }
-            return responses;
-        },
-        parseMList: function(line) {
-            var ret, result = line.trim().split(reKV);
-
-            if (result && result.length > 0) {
-                ret = {};
-                if (result.length === 1)
-                    ret.name = result[0].trim();
-                else {
-                    var i = 1;
-                    for (var k,v,len=result.length; i<len; i+=3) {
-                        k = result[i];
-                        v = result[i+1];
-                        ret[k] = v;
-                    }
-                    ret.name = result[result.length-1].trim();
-                }
-            } else
-                ret = line;
-
-            return ret;
-        },
-        makeError: function(code, text) {
-            var err = new Error('Server Error: ' + code + (text ? ' ' + text : ''));
-            err.code = code;
-            err.text = text;
-            return err;
-        },
-        getGroup: function(code) {
-            return parseInt(code/10)%10;
-        },
-        parseList: function(line) {
-            var ret,
-                info,
-                thisYear = (new Date()).getFullYear(),
-                months = {
-                    jan: 1,
-                    feb: 2,
-                    mar: 3,
-                    apr: 4,
-                    may: 5,
-                    jun: 6,
-                    jul: 7,
-                    aug: 8,
-                    sep: 9,
-                    oct: 10,
-                    nov: 11,
-                    dec: 12
-                };
-
-            if (ret = reXListUnix.exec(line)) {
-                info = {};
-                info.type = ret.type;
-                info.rights = {};
-                info.rights.user = ret.permission.substring(0, 3).replace('-', '');
-                info.rights.group = ret.permission.substring(3, 6).replace('-', '');
-                info.rights.other = ret.permission.substring(6, 9).replace('-', '');
-                info.owner = ret.owner;
-                info.group = ret.group;
-                info.size = ret.size;
-                info.date = {};
-                if (typeof ret.month1 !== 'undefined') {
-                    info.date.month = parseInt(months[ret.month1.toLowerCase()], 10);
-                    info.date.date = parseInt(ret.date1, 10);
-                    info.date.year = thisYear;
-                    info.time = {};
-                    info.time.hour = parseInt(ret.hour, 10);
-                    info.time.minute = parseInt(ret.minute, 10);
-                } else if (typeof ret.month2 !== 'undefined') {
-                    info.date.month = parseInt(months[ret.month2.toLowerCase()], 10);
-                    info.date.date = parseInt(ret.date2, 10);
-                    info.date.year = parseInt(ret.year, 10);
-                }
-                if (ret.type === 'l') {
-                    var pos = ret.name.indexOf(' -> ');
-                    info.name = ret.name.substring(0, pos);
-                    info.target = ret.name.substring(pos+4);
-                } else
-                    info.name = ret.name;
-                ret = info;
-            } else if (ret = reXListMSDOS.exec(line)) {
-                info = {};
-                info.type = (ret.isdir ? 'd' : '-');
-                info.size = (ret.isdir ? '0' : ret.size);
-                info.date = {};
-                info.date.month = parseInt(ret.month, 10);
-                info.date.date = parseInt(ret.date, 10);
-                info.date.year = parseInt(ret.year, 10);
-                info.time = {};
-                info.time.hour = parseInt(ret.hour, 10);
-                info.time.minute = parseInt(ret.minute, 10);
-                if (ret.ampm[0].toLowerCase() === 'p' && info.time.hour < 12)
-                    info.time.hour += 12;
-                else if (ret.ampm[0].toLowerCase() === 'a' && info.time.hour === 12)
-                    info.time.hour = 0;
-                info.name = ret.name;
-                ret = info;
-            } else
-                ret = line; // could not parse, so at least give the end user a chance to look at the raw listing themselves
-
-            return ret;
-        }
     };
 }).call(FTP.prototype);
 
