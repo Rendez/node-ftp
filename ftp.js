@@ -2,7 +2,7 @@ var Util = require('util'),
     Net = require('net'),
     EventEmitter = require('events').EventEmitter,
     Parser = require('./ftp_parser'),
-    debug = function() { console.log('>>',arguments); };
+    debug = function(){}
 
 var FTP = module.exports = function(options) {
     this.$socket = null;
@@ -441,7 +441,7 @@ Util.inherits(FTP, EventEmitter);
             node = parts.pop(),
             root = parts.join("/");
         
-        if (root.charAt(0) != "/") {
+        if (root.charAt(0) != "/" && path != "") {
             this.pwd(function(err, pwd) {
                 if (err || !pwd)
                     return callback(err || pwd);
