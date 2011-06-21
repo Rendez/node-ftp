@@ -22,6 +22,9 @@ var FTP = module.exports = function(options) {
         // to indicate use of passive mode
     };
     extend(true, this.options, options);
+    // Set TimeZone hour difference to get the server's LIST offset.
+    FTP.TZHourDiff = this.options.TZHourDiff || 0;
+    
     if (typeof this.options.debug === 'function')
         debug = this.options.debug;
 };
@@ -359,14 +362,23 @@ Util.inherits(FTP, EventEmitter);
         this.name   = struct.name;
         this.rights = struct.rights;
 
-        this.getLastMod = function() {
+        /** Not recommended, it usually will return the time according
+          * to the server's own Timezone shell settings */
+        this.getLastMod = function(type) {
             var joinDateArr = [], joinTimeArr = [];
             for (var d in struct.date)
                 joinDateArr.push(struct.date[d]);
             for (var t in struct.time)
                 joinTimeArr.push(struct.time[t]);
             
-            return new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':'));
+            if (type === undefined || type === 'LIST') {
+                var intHours = FTP.TZHourDiff < 0 ? FTP.TZHourDiff * -1 : FTP.TZHourDiff;
+                var hours = FTP.TZHourDiff > 0 ? ('-0'+intHours+'00') : ('+0'+intHours+'00');
+                
+                return new Date(joinDateArr.join(' ') +' '+ joinTimeArr.join(':') +' GMT '+ hours);
+            }
+            else if (type === 'MLSD')
+                return new Date(joinDateArr.join(' ') +' '+ joinTimeArr.join(':') +' UTC');
         };
         /**
         * @type {Boolean}
@@ -611,7 +623,7 @@ Util.inherits(FTP, EventEmitter);
             for (var t in time)
                 joinTimeArr.push(time[t]);
             
-            var mdtm = new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':'));
+            var mdtm = new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':') + ' GMT');
             callback(undefined, mdtm);
         });
     };
