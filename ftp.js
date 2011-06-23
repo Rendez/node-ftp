@@ -435,8 +435,9 @@ Util.inherits(FTP, EventEmitter);
             var nodes = [];
             emitter.on('entry', function(entry) {
                 var item = new Stat(entry);
-                var p = item.name;
-                nodes.push(p.substr(p.lastIndexOf("/") + 1));
+                //var p = item.name;
+                nodes.push(item);
+                //nodes.push(p.substr(p.lastIndexOf("/") + 1));
             });
             emitter.on('error', function(err) { // Under normal circumstances this shouldn't happen.
                 self.$socket.end();
