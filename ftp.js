@@ -189,7 +189,7 @@ Util.inherits(FTP, EventEmitter);
                             self.$executeNext(makeError(code, text));
                         } else if (group === 5) { // group 4 is unused
                             // server file system state
-                            if (code === 250 && self.$queue[0][0] === 'MLST')
+                            if (code === 250 && self.$queue.length && self.$queue[0][0] === 'MLST')
                                 self.$executeNext(text);
                             else if (code === 250 || code === 350)
                                 self.$executeNext();
