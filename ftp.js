@@ -12,6 +12,8 @@ var FTP = module.exports = function(options) {
     this.$pasvIP = null;
     this.$feat = null;
     this.$queue = [];
+    this.$pasvQueue = [];
+    this.$pasvStack = [];
     this.options = {
         host: 'localhost',
         port: 21,
@@ -61,8 +63,10 @@ Util.inherits(FTP, EventEmitter);
             this.$dataSock.end();
 
         var connTimeout = setTimeout(function() {
-            self.$socket.destroy();
-            self.$socket = null;
+            if (self.$socket) {
+                self.$socket.destroy();
+                self.$socket = null;
+            }
             self.emit('timeout');
         }, this.options.connTimeout);
         
@@ -91,11 +95,13 @@ Util.inherits(FTP, EventEmitter);
             clearTimeout(connTimeout);
             if (self.$dataSocket)
                 self.$dataSocket.end();
+            self.$state = null;
             self.emit('close', hasError);
         });
         socket.on('error', function(err) {
             self.emit('error', err);
-            if (err.message && err.message.indexOf('ECONNRESET') > -1) {
+            self.$state = null;
+            if (err/*.message && err.message.indexOf('ECONNRESET') > -1*/) {
                 //self.$executeNext();
                 return self.connect();
             }
@@ -152,43 +158,45 @@ Util.inherits(FTP, EventEmitter);
                         processNext = true;
                     else if (code < 200)
                         continue;
-
-                    if (group === 0) {
-                        // all in here are errors except 200
-                        if (code === 200)
-                            self.$executeNext();
-                        else
-                            self.$executeNext(makeError(code, text));
-                    } else if (group === 1) {
-                        // informational group
-                        if (code >= 211 && code <= 215)
-                            self.$executeNext(text);
-                        else
-                            self.$executeNext(makeError(code, text));
-                    } else if (group === 2) {
-                        // control/data connection-related
-                        if (code === 226) {
-                            // closing data connection, file action request successful
-                            self.$executeNext();
-                        } else if (code === 227) {
-                            // server entering passive mode
-                            var parsed = text.match(/([\d]+),([\d]+),([\d]+),([\d]+),([-\d]+),([-\d]+)/);
-                            if (!parsed)
-                                throw new Error('Could not parse passive mode response: ' + text);
-                            self.$pasvIP = parsed[1] + '.' + parsed[2] + '.' + parsed[3] + '.' + parsed[4];
-                            self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
-                            self.$pasvConnect();
-                            return;
-                        } else
-                            self.$executeNext(makeError(code, text));
-                    } else if (group === 3) {
-                        // authentication-related
-                        if (code === 331 || code === 230)
-                            self.$executeNext((code === 331));
-                        else
-                            self.$executeNext(makeError(code, text));
-                        } else if (group === 5) { // group 4 is unused
-                            // server file system state
+                    
+                    switch(group) {
+                        case 0: // all in here are errors except 200
+                            if (code === 200)
+                                self.$executeNext();
+                            else
+                                self.$executeNext(makeError(code, text));
+                        break;
+                        case 1: // informational group
+                            if (code >= 211 && code <= 215)
+                                self.$executeNext(text);
+                            else
+                                self.$executeNext(makeError(code, text));
+                        break;
+                        case 2: // control/data connection-related
+                            if (code === 226) {
+                                // closing data connection, file action request successful
+                                self.$executeNext();
+                            } else if (code === 227) {
+                                // server entering passive mode
+                                var parsed = text.match(/([\d]+),([\d]+),([\d]+),([\d]+),([-\d]+),([-\d]+)/);
+                                if (!parsed)
+                                    throw new Error('Could not parse passive mode response: ' + text);
+                                self.$pasvIP = parsed[1] + '.' + parsed[2] + '.' + parsed[3] + '.' + parsed[4];
+                                self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
+                                // call $executeNext after having dataSocket connected, then wait for response.
+                                return self.$pasvConnect();
+                            } else
+                                self.$executeNext(makeError(code, text));
+                        break;
+                        case 3: // authentication-related
+                            if (code === 331 || code === 230)
+                                self.$executeNext((code === 331));
+                            else
+                                self.$executeNext(makeError(code, text));
+                            
+                        break;
+                        /*case 4: // not used */
+                        case 5: // server file system state
                             if (code === 250 && self.$queue.length && self.$queue[0][0] === 'MLST')
                                 self.$executeNext(text);
                             else if (code === 250 || code === 350)
@@ -202,11 +210,11 @@ Util.inherits(FTP, EventEmitter);
                                 self.$executeNext(path);
                             } else
                                 self.$executeNext(makeError(code, text));
-                        }
-                        if (processNext)
-                            self.send();
+                        break;
                     }
                 }
+                if (processNext) self.send();
+            }
         });
     };
     /** Standard features */
@@ -454,7 +462,7 @@ Util.inherits(FTP, EventEmitter);
             node = parts.pop(),
             root = parts.join("/");
         
-        if (root.charAt(0) != "/" && path != "") {
+        if (root.charAt(0) != "/") {
             this.pwd(function(err, pwd) {
                 if (err || !pwd)
                     return callback(err || pwd);
@@ -466,8 +474,6 @@ Util.inherits(FTP, EventEmitter);
             afterPwd();
 
         function afterPwd() {
-            if (debug)
-                debug('STAT ' + root);
             // List and add to first matching result to the list
             self.list(root, function(err, emitter) {
                 if (err)
@@ -644,30 +650,58 @@ Util.inherits(FTP, EventEmitter);
                 callback = params;
                 params = undefined;
             }
-            if (!params)
+            if (cmd === 'PASV')
+                return this.sendPasv(cmd, callback);
+            else if (!params)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
-                
-            this.emit('command', params ? [cmd].concat(params) : [cmd]);
         }
         
         if (this.$queue.length) { 
             var fullcmd = this.$queue[0][0] + (this.$queue[0].length === 3 ? ' ' + this.$queue[0][1] : '');
             if (debug)
                 debug('> ' + fullcmd);
+            this.emit('command', fullcmd);
             // WRITE COMMAND AND ARGUMENTS TO THE SOCKET:
             this.$socket.write(fullcmd + '\r\n');
         }
 
         return true;
     };
+    this.sendPasv = function(cmd, callback) {
+        // Check if dataSocket is still on the line from a previous call.
+        if (this.$pasvRunning(cmd, callback))
+            return true;
+        
+        this.$pasvQueue.push([cmd, callback]);
+        if (debug)
+            debug('> ' + cmd);
+        this.emit('command', cmd);
+        // Ask the server to switch to PASV mode
+        this.$socket.write(cmd + '\r\n');
+
+        return true;
+    };
+    this.$pasvRunning = function() {
+        if (!this.$pasvQueue.length)
+            return false;
+        
+        var args = Array.prototype.slice.call(arguments);
+        this.$pasvStack.push(args);
+        if (debug)
+            debug('(QUEUE) Stacking PASV ... ');
+        
+        return true;
+    };
     this.$pasvGetLines = function(emitter, type, callback) {
         return this.send('PASV', function(err, stream) {
             if (err)
                 return callback(err);
-            else if (!emitter || !stream.setEncoding)
+            else if (!emitter)
                 return emitter.emit('error', new Error('Connection severed'));
+            else if (!stream.readable)
+                return callback(err || new Error('Stream not readable'));
             
             var curData = '', lines;
             stream.setEncoding('utf8');
@@ -728,7 +762,7 @@ Util.inherits(FTP, EventEmitter);
             clearTimeout(pasvTimeout);
             if (debug)
                 debug('(PASV) Data connection successful');
-            self.$executeNext(self.$dataSock);
+            self.$executeNextPasv(self.$dataSock);
         });
         this.$dataSock.on('end', function() {
             if (debug)
@@ -737,6 +771,14 @@ Util.inherits(FTP, EventEmitter);
         });
         this.$dataSock.on('close', function() {
             clearTimeout(pasvTimeout);
+            // Data connection closed, send next command in the queue.
+            if (self.$pasvStack.length) {
+                process.nextTick(function(){
+                    if (debug)
+                        debug('(SEND) Queued command: ' + self.$pasvStack[0][0]);
+                    self.send.apply(self, self.$pasvStack.shift());
+                });
+            }
         });
         this.$dataSock.on('error', function(err) {
             if (debug)
@@ -752,8 +794,8 @@ Util.inherits(FTP, EventEmitter);
         if (!this.$queue.length)
             return;
 
-        var req = this.$queue.shift(),
-            callback = (req.length === 3 ? req[2] : req[1]);
+        var p = this.$queue.shift();
+        var callback = (p.length === 3 ? p[2] : p[1]);
         
         if (!callback)
             return;
@@ -768,6 +810,19 @@ Util.inherits(FTP, EventEmitter);
             });
         } else
             process.nextTick(callback);
+    };
+    this.$executeNextPasv = function(stream) {
+        if (stream !== this.$dataSock)
+            return;
+        
+        var p = this.$pasvQueue.shift();
+        var callback = p[1] || null;
+        if (!callback)
+            return;
+        
+        process.nextTick(function(){
+            callback(undefined, stream);
+        });
     };
 }).call(FTP.prototype);
 
