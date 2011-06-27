@@ -99,12 +99,9 @@ Util.inherits(FTP, EventEmitter);
             self.emit('close', hasError);
         });
         socket.on('error', function(err) {
-            self.emit('error', err);
             self.$state = null;
-            if (err/*.message && err.message.indexOf('ECONNRESET') > -1*/) {
-                //self.$executeNext();
-                return self.connect();
-            }
+            self.end();
+            self.emit('error', err);
         });
         socket.on('data', function(data) {
             curData += data;
