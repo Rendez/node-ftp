@@ -99,8 +99,8 @@ Util.inherits(FTP, EventEmitter);
             self.emit('close', hasError);
         });
         socket.on('error', function(err) {
-            self.$state = null;
             self.end();
+            self.$state = null;
             self.emit('error', err);
         });
         socket.on('data', function(data) {
