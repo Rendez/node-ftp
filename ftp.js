@@ -151,8 +151,13 @@ Util.inherits(FTP, EventEmitter);
                         return;
                     }
                     
-                    if (code >= 200 && !processNext)
+                    if (code >= 200 && !processNext) {
                         processNext = true;
+                        switch(code) {
+                            case 55: case 550: // permission denied
+                                return self.$executeNext(makeError(code, text));
+                        }
+                    }
                     else if (code < 200)
                         continue;
                     
