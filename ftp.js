@@ -507,54 +507,58 @@ Util.inherits(FTP, EventEmitter);
             path = undefined;
         }
         var self = this, emitter = new EventEmitter(), params;
-        /*if (params = this.$feat['MLST']) {
-        var type = undefined,
-        cbTemp = function(err, text) {
-        if (err) {
-        if (!type && e.code === 550) { // path was a file not a dir.
-        type = 'file';
-        if (!self.send('MLST', path, cbTemp))
-        return callback(new Error('Connection severed'));
-        return;
-        } else if (!type && e.code === 425) {
-        type = 'pasv';
-        if (!self.$pasvGetLines(emitter, 'MLSD', cbTemp))
-        return callback(new Error('Connection severed'));
-        return;
-        }
-        if (type === 'dir')
-        return emitter.emit('error', err);
-        else
-        return callback(err);
-        }
-        if (type === 'file') {
-        callback(undefined, emitter);
-        var lines = text.split(/\r\n|\n/), result;
-        lines.shift();
-        lines.pop();
-        lines.pop();
-        result = Parser.parseMList(lines[0]);
-        emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
-        emitter.emit('end');
-        emitter.emit('success');
-        } else if (type === 'pasv') {
-        type = 'dir';
-        if (path)
-        r = self.send('MLSD', path, cbTemp);
-        else
-        r = self.send('MLSD', cbTemp);
-        if (r)
-        callback(undefined, emitter);
-        else
-        callbac(new Error('Connection severed'));
-        } else if (type === 'dir')
-        emitter.emit('success');
-        };
-        if (path)
-        return this.send('MLSD', path, cbTemp);
-        else
-        return this.send('MLSD', cbTemp);
-        } else {*/
+        
+        
+        if (params = this.$feat['MLST']) { // MLSD
+            var type = undefined,
+            cbTemp = function(err, text) {
+                if (err) {
+                    if (!type && e.code === 550) { // path was a file not a dir.
+                        type = 'file';
+                        console.log('try MLST');
+                        if (!self.send('MLST', path, cbTemp))
+                            return callback(new Error('Connection severed'));
+                        return;
+                    } else if (!type && e.code === 425) {
+                        type = 'pasv';
+                        console.log('try MLSD');
+                        if (!self.$pasvGetLines(emitter, 'MLSD', cbTemp))
+                            return callback(new Error('Connection severed'));
+                        return;
+                    }
+                    if (type === 'dir')
+                        return emitter.emit('error', err);
+                    else
+                        return callback(err);
+                }
+                if (type === 'file') {
+                    callback(undefined, emitter);
+                    var lines = text.split(/\r\n|\n/), result;
+                    lines.shift();
+                    lines.pop();
+                    lines.pop();
+                    result = Parser.parseMList(lines[0]);
+                    emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
+                    emitter.emit('end');
+                    emitter.emit('success');
+                } else if (type === 'pasv') {
+                    type = 'dir';
+                    if (path)
+                        r = self.send('MLSD', path, cbTemp);
+                    else
+                        r = self.send('MLSD', cbTemp);
+                    if (r)
+                        callback(undefined, emitter);
+                    else
+                        callback(new Error('Connection severed'));
+                } else if (type === 'dir')
+                        emitter.emit('success');
+            };
+            if (path)
+                return this.send('MLSD', path, cbTemp);
+            else
+                return this.send('MLSD', cbTemp);
+        } else {
             // Otherwise use the standard way of fetching a listing
             this.$pasvGetLines(emitter, 'LIST', function(err) {
                 if (err)
@@ -575,7 +579,7 @@ Util.inherits(FTP, EventEmitter);
                 else
                     callback(new Error('Connection severed'));
             });
-        //}
+        }
     };
     
     this.system = function(callback) {
@@ -650,6 +654,10 @@ Util.inherits(FTP, EventEmitter);
                 callback = params;
                 params = undefined;
             }
+            if (cmd === 'RNFR')
+                this.$lastCmd = cmd;
+            else
+                this.$lastCmd = null;
             if (cmd === 'PASV')
                 return this.sendPasv(cmd, callback);
             else if (!params)
@@ -684,7 +692,7 @@ Util.inherits(FTP, EventEmitter);
         return true;
     };
     this.$pasvRunning = function() {
-        if (!this.$pasvQueue.length)
+        if (!this.$pasvQueue.length && this.$lastCmd !== 'RNFR')
             return false;
         
         var args = Array.prototype.slice.call(arguments);
