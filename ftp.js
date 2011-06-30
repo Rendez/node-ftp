@@ -12,8 +12,8 @@ var FTP = module.exports = function(options) {
     this.$pasvIP = null;
     this.$feat = null;
     this.$queue = [];
-    this.$pasvQueue = [];
-    this.$pasvStack = [];
+    //this.$pasvQueue = [];
+    //this.$pasvStack = [];
     this.options = {
         host: 'localhost',
         port: 21,
@@ -654,13 +654,13 @@ Util.inherits(FTP, EventEmitter);
                 callback = params;
                 params = undefined;
             }
-            if (cmd === 'RNFR')
+            /*if (cmd === 'RNFR')
                 this.$lastCmd = cmd;
             else
                 this.$lastCmd = null;
             if (cmd === 'PASV')
-                return this.sendPasv(cmd, callback);
-            else if (!params)
+                return this.sendPasv(cmd, callback);*/
+            if (!params)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
@@ -677,7 +677,7 @@ Util.inherits(FTP, EventEmitter);
 
         return true;
     };
-    this.sendPasv = function(cmd, callback) {
+    /*this.sendPasv = function(cmd, callback) {
         // Check if dataSocket is still on the line from a previous call.
         if (this.$pasvRunning(cmd, callback))
             return true;
@@ -690,8 +690,8 @@ Util.inherits(FTP, EventEmitter);
         this.$socket.write(cmd + '\r\n');
 
         return true;
-    };
-    this.$pasvRunning = function() {
+    };*/
+    /*this.$pasvRunning = function() {
         if (!this.$pasvQueue.length && this.$lastCmd !== 'RNFR')
             return false;
         
@@ -701,7 +701,7 @@ Util.inherits(FTP, EventEmitter);
             debug('(QUEUE) Stacking PASV ... ');
         
         return true;
-    };
+    };*/
     this.$pasvGetLines = function(emitter, type, callback) {
         return this.send('PASV', function(err, stream) {
             if (err)
@@ -770,7 +770,8 @@ Util.inherits(FTP, EventEmitter);
             clearTimeout(pasvTimeout);
             if (debug)
                 debug('(PASV) Data connection successful');
-            self.$executeNextPasv(self.$dataSock);
+            //self.$executeNextPasv(self.$dataSock);
+            self.$executeNext(self.$dataSock);
         });
         this.$dataSock.on('end', function() {
             if (debug)
@@ -780,13 +781,13 @@ Util.inherits(FTP, EventEmitter);
         this.$dataSock.on('close', function() {
             clearTimeout(pasvTimeout);
             // Data connection closed, send next command in the queue.
-            if (self.$pasvStack.length) {
+            /*if (self.$pasvStack.length) {
                 process.nextTick(function(){
                     if (debug)
                         debug('(SEND) Queued command: ' + self.$pasvStack[0][0]);
                     self.send.apply(self, self.$pasvStack.shift());
                 });
-            }
+            }*/
         });
         this.$dataSock.on('error', function(err) {
             if (debug)
@@ -819,7 +820,7 @@ Util.inherits(FTP, EventEmitter);
         } else
             process.nextTick(callback);
     };
-    this.$executeNextPasv = function(stream) {
+    /*this.$executeNextPasv = function(stream) {
         if (stream !== this.$dataSock)
             return;
         
@@ -831,7 +832,7 @@ Util.inherits(FTP, EventEmitter);
         process.nextTick(function(){
             callback(undefined, stream);
         });
-    };
+    };*/
 }).call(FTP.prototype);
 
 /**
