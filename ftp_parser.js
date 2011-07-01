@@ -3,38 +3,69 @@
  * @subpackage node-ftp
  * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
  * @author Luis Merino <mail AT luismerino DOT name>
- * @license http://github.com/Rendez/node-ftp/raw/master/LICENSE MIT License
+ * @contributor Sergi Mansilla <sergi AT ajax DOT org>
+ *
+ * See RFC at http://www.w3.org/Protocols/rfc959
  */
-var XRegExp = require('./xregexp'),
-    reXListUnix = XRegExp.cache('^(?<type>[\\-ld])(?<permission>([\\-r][\\-w][\\-xs]){3})\\s+(?<inodes>\\d+)\\s+(?<owner>\\w+)\\s+(?<group>\\w+)\\s+(?<size>\\d+)\\s+(?<timestamp>((?<month1>\\w{3})\\s+(?<date1>\\d{1,2})\\s+(?<hour>\\d{1,2}):(?<minute>\\d{2}))|((?<month2>\\w{3})\\s+(?<date2>\\d{1,2})\\s+(?<year>\\d{4})))\\s+(?<name>.+)$'),
-    reXListMSDOS = XRegExp.cache('^(?<month>\\d{2})(?:\\-|\\/)(?<date>\\d{2})(?:\\-|\\/)(?<year>\\d{2,4})\\s+(?<hour>\\d{2}):(?<minute>\\d{2})\\s{0,1}(?<ampm>[AaMmPp]{1,2})\\s+(?:(?<size>\\d+)|(?<isdir>\\<DIR\\>))\\s+(?<name>.+)$'),
-    reXTimeval = XRegExp.cache('^(?<year>\\d{4})(?<month>\\d{2})(?<date>\\d{2})(?<hour>\\d{2})(?<minute>\\d{2})(?<second>\\d+)$'),
-    reKV = /(.+?)=(.+?);/;
+var _ = require("./support/underscore");
+var XRegExp = require('./xregexp');
+var reXListUnix = XRegExp.cache('^(?<type>[\\-ld])(?<permission>([\\-r][\\-w][\\-xs]){3})\\s+(?<inodes>\\d+)\\s+(?<owner>\\w+)\\s+(?<group>\\w+)\\s+(?<size>\\d+)\\s+(?<timestamp>((?<month1>\\w{3})\\s+(?<date1>\\d{1,2})\\s+(?<hour>\\d{1,2}):(?<minute>\\d{2}))|((?<month2>\\w{3})\\s+(?<date2>\\d{1,2})\\s+(?<year>\\d{4})))\\s+(?<name>.+)$');
+var reXListMSDOS = XRegExp.cache('^(?<month>\\d{2})(?:\\-|\\/)(?<date>\\d{2})(?:\\-|\\/)(?<year>\\d{2,4})\\s+(?<hour>\\d{2}):(?<minute>\\d{2})\\s{0,1}(?<ampm>[AaMmPp]{1,2})\\s+(?:(?<size>\\d+)|(?<isdir>\\<DIR\\>))\\s+(?<name>.+)$');
+var reXTimeval = XRegExp.cache('^(?<year>\\d{4})(?<month>\\d{2})(?<date>\\d{2})(?<hour>\\d{2})(?<minute>\\d{2})(?<second>\\d+)$');
+var reKV = /(.+?)=(.+?);/;
+var RE_SERVER_RESPONSE = /^(\d\d\d)(.*)/;
 
 exports.parseResponses = function(lines) {
-    if (typeof lines != "object" || lines.length === undefined)
-        throw new TypeError("Responses are expected to be sent in Array format");
-        
-    var responses = [], multiline = "";
+    if (!_.isArray(lines))
+        throw new TypeError("The parameter should be an Array");
 
-    for (var i=0, match, len=lines.length; i < len; ++i) {
-        if (match = lines[i].match(/^(\d{3})(?:$|(\s|\-)(.+))/)) {
-            if (match[2] === "-") {
-                if (match[3])
-                    multiline += match[3] + "\n";
-                continue;
-            } else
-                match[3] = (match[3] ? multiline + match[3] : multiline);
+    var responses = [];
 
-            if (match[3].length)
-                responses.push([parseInt(match[1]), match[3]]);
-            else
-                responses.push([parseInt(match[1])]);
-            multiline = "";
-        } else
-            multiline += lines[i] + "\n";
-    }
-    
+    lines
+        .map(function(line) {
+            var match = line.match(RE_SERVER_RESPONSE);
+            match && (line = [parseInt(match[1], 10), match[2]]);
+            return line;
+        })
+        .reduce(function(p, c, i) {
+            // If there is a previous line it means that we are inside a multiline
+            // server response command, in which case we will add the current
+            // line contents to the previous one, but we have to check if the
+            // current line is the one that terminates the multiline string, in
+            // which case we add its contents and terminate the multiline by
+            // returning null.
+            if (p) {
+                var cIsMultiLine, currentMsg;
+                var cIsArray = _.isArray(c);
+
+                if (cIsArray) {
+                    cIsMultiLine = c[1][0] == "-";
+                    currentMsg   = c[0] + c[1];
+                }
+                else {
+                    cIsMultiLine = false;
+                    currentMsg = c;
+                }
+
+                p[1] += "\n" + currentMsg;
+                // If the current line is a code/message response, and the code
+                // is the same as the previous code and the current line is not
+                // a multiline one (in which case it would be treated as any
+                // random text).
+                if (cIsArray && c[0] == p[0] && !cIsMultiLine) {
+                    responses.push(p);
+                    return null;
+                }
+                return p;
+            }
+            else if (c[1][0] == "-")
+                return c;
+            else {
+                responses.push(c);
+                return null;
+            }
+        }, null);
+
     return responses;
 };
 
@@ -150,3 +181,4 @@ function parseMList(line) {
 
     return ret;
 }
+
