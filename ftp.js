@@ -708,7 +708,7 @@ Util.inherits(FTP, EventEmitter);
                 return callback(err);
             else if (!emitter)
                 return emitter.emit('error', new Error('Connection severed'));
-            else if (!stream.readable)
+            else if (stream && !stream.readable)
                 return callback(err || new Error('Stream not readable'));
             
             var curData = '', lines;
