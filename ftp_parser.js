@@ -8,12 +8,79 @@
  * See RFC at http://www.w3.org/Protocols/rfc959
  */
 var _ = require("./support/underscore");
-var XRegExp = require('./xregexp');
-var reXListUnix = XRegExp.cache('^(?<type>[\\-ld])(?<permission>([\\-r][\\-w][\\-xs]){3})\\s+(?<inodes>\\d+)\\s+(?<owner>\\w+)\\s+(?<group>\\w+)\\s+(?<size>\\d+)\\s+(?<timestamp>((?<month1>\\w{3})\\s+(?<date1>\\d{1,2})\\s+(?<hour>\\d{1,2}):(?<minute>\\d{2}))|((?<month2>\\w{3})\\s+(?<date2>\\d{1,2})\\s+(?<year>\\d{4})))\\s+(?<name>.+)$');
-var reXListMSDOS = XRegExp.cache('^(?<month>\\d{2})(?:\\-|\\/)(?<date>\\d{2})(?:\\-|\\/)(?<year>\\d{2,4})\\s+(?<hour>\\d{2}):(?<minute>\\d{2})\\s{0,1}(?<ampm>[AaMmPp]{1,2})\\s+(?:(?<size>\\d+)|(?<isdir>\\<DIR\\>))\\s+(?<name>.+)$');
-var reXTimeval = XRegExp.cache('^(?<year>\\d{4})(?<month>\\d{2})(?<date>\\d{2})(?<hour>\\d{2})(?<minute>\\d{2})(?<second>\\d+)$');
 var reKV = /(.+?)=(.+?);/;
+
 var RE_SERVER_RESPONSE = /^(\d\d\d)(.*)/;
+
+/**
+ * this is the regular expression used by Unix Parsers.
+ *
+ * Permissions:
+ *    r   the file is readable
+ *    w   the file is writable
+ *    x   the file is executable
+ *    -   the indicated permission is not granted
+ *    L   mandatory locking occurs during access (the set-group-ID bit is
+ *        on and the group execution bit is off)
+ *    s   the set-user-ID or set-group-ID bit is on, and the corresponding
+ *        user or group execution bit is also on
+ *    S   undefined bit-state (the set-user-ID bit is on and the user
+ *        execution bit is off)
+ *    t   the 1000 (octal) bit, or sticky bit, is on [see chmod(1)], and
+ *        execution is on
+ *    T   the 1000 bit is turned on, and execution is off (undefined bit-
+ *        state)
+ */
+
+var RE_UnixEntry = new RegExp(
+    "([bcdlfmpSs-])"
+    + "(((r|-)(w|-)([xsStTL-]))((r|-)(w|-)([xsStTL-]))((r|-)(w|-)([xsStTL-])))\\+?\\s+"
+    + "(\\d+)\\s+"
+    + "(\\S+)\\s+"
+    + "(?:(\\S+)\\s+)?"
+    + "(\\d+)\\s+"
+
+    //numeric or standard format date
+    + "((?:\\d+[-/]\\d+[-/]\\d+)|(?:\\S+\\s+\\S+))\\s+"
+
+    // year (for non-recent standard format)
+    // or time (for numeric or recent standard format)
+    + "(\\d+(?::\\d+)?)\\s+"
+
+    //+ "(\\S*)(\\s*.*)"
+    + "(.*)"
+);
+
+var RE_NTEntry = new RegExp(
+    "(\\S+)\\s+(\\S+)\\s+"
+    + "(<DIR>)?\\s*"
+    + "([0-9]+)?\\s+"
+    + "(\\S.*)"
+);
+
+var RE_VMSEntry = new RegExp(
+    "(.*;[0-9]+)\\s*"
+    + "(\\d+)/\\d+\\s*"
+    + "(\\S+)\\s+(\\S+)\\s+"
+    + "\\[(([0-9$A-Za-z_]+)|([0-9$A-Za-z_]+),([0-9$a-zA-Z_]+))\\]?\\s*"
+    + "\\([a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*\\)"
+);
+
+
+var MONTHS = [null, "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+var FILE_TYPE           = 0;
+var DIRECTORY_TYPE      = 1;
+var SYMBOLIC_LINK_TYPE  = 2;
+var UNKNOWN_TYPE        = 3;
+
+var READ_PERMISSION     = 0;
+var WRITE_PERMISSION    = 1;
+var EXECUTE_PERMISSION  = 2;
+
+var USER_ACCESS         = 0;
+var GROUP_ACCESS        = 1;
+var WORLD_ACCESS        = 2;
 
 exports.parseResponses = function(lines) {
     if (!_.isArray(lines))
@@ -58,8 +125,9 @@ exports.parseResponses = function(lines) {
                 }
                 return p;
             }
-            else if (c[1][0] == "-")
+            else if (c[1][0] == "-") {
                 return c;
+            }
             else {
                 responses.push(c);
                 return null;
@@ -88,76 +156,75 @@ exports.getGroup = function(code) {
     return parseInt(code / 10) % 10;
 };
 
-function parseList(line) {
-    var ret,
-        info,
-        thisYear = (new Date()).getFullYear(),
-        months = {
-            jan: 1,
-            feb: 2,
-            mar: 3,
-            apr: 4,
-            may: 5,
-            jun: 6,
-            jul: 7,
-            aug: 8,
-            sep: 9,
-            oct: 10,
-            nov: 11,
-            dec: 12
+exports.entryParser = function(entry) {
+    var target, writePerm, readPerm, execPerm;
+    var group = entry.match(RE_UnixEntry);
+
+    if (group) {
+        var type = group[1];
+        var hardLinks = group[15];
+        var usr = group[16];
+        var grp = group[17];
+        var size = group[18];
+        var date = new Date(group[19] + " " + group[20]).getTime();
+        var name = group[21];
+        var endtoken = group[22];
+    }
+
+    var pos = name.indexOf(' -> ');
+    if (pos > -1) {
+        name   = name.substring(0, pos);
+        target = name.substring(pos + 4);
+    }
+
+    switch (type[0]) {
+        case 'd':
+            type = DIRECTORY_TYPE;
+            break;
+        case 'l':
+            type = SYMBOLIC_LINK_TYPE;
+            break;
+        case 'b':
+        case 'c':
+            // break; - fall through
+        case 'f':
+        case '-':
+            type = FILE_TYPE;
+            break;
+        default:
+            type = UNKNOWN_TYPE;
+    }
+
+    var file = {
+        name: name,
+        type: type,
+        time: date,
+        size: size,
+        owner: usr,
+        group: grp
+    };
+
+    if (target) file.target = target;
+
+    var g = 4;
+    ["user", "group", "other"].forEach(function(access) {
+        // Use != '-' to avoid having to check for suid and sticky bits
+        readPerm  = group[g] !== "-";
+        writePerm = group[g + 1] !== "-";
+
+        var execPermStr = group[g + 2];
+        execPerm = (execPermStr !== "-") && !(/[A-Z]/.test(execPermStr[0]));
+
+        file[access + "Permissions"] = {
+            read : readPerm,
+            write: writePerm,
+            exec : execPerm
         };
 
-    if (ret = reXListUnix.exec(line)) {
-        info = {};
-        info.type = ret.type;
-        info.rights = {};
-        info.rights.user = ret.permission.substring(0, 3).replace('-', '');
-        info.rights.group = ret.permission.substring(3, 6).replace('-', '');
-        info.rights.other = ret.permission.substring(6, 9).replace('-', '');
-        info.owner = ret.owner;
-        info.group = ret.group;
-        info.size = ret.size;
-        info.date = {};
-        if (typeof ret.month1 !== 'undefined') {
-            info.date.month = parseInt(months[ret.month1.toLowerCase()], 10);
-            info.date.date = parseInt(ret.date1, 10);
-            info.date.year = thisYear;
-            info.time = {};
-            info.time.hour = parseInt(ret.hour, 10);
-            info.time.minute = parseInt(ret.minute, 10);
-        } else if (typeof ret.month2 !== 'undefined') {
-            info.date.month = parseInt(months[ret.month2.toLowerCase()], 10);
-            info.date.date = parseInt(ret.date2, 10);
-            info.date.year = parseInt(ret.year, 10);
-        }
-        if (ret.type === 'l') {
-            var pos = ret.name.indexOf(' -> ');
-            info.name = ret.name.substring(0, pos);
-            info.target = ret.name.substring(pos+4);
-        } else
-            info.name = ret.name;
-        ret = info;
-    } else if (ret = reXListMSDOS.exec(line)) {
-        info = {};
-        info.type = (ret.isdir ? 'd' : '-');
-        info.size = (ret.isdir ? '0' : ret.size);
-        info.date = {};
-        info.date.month = parseInt(ret.month, 10);
-        info.date.date = parseInt(ret.date, 10);
-        info.date.year = parseInt(ret.year, 10);
-        info.time = {};
-        info.time.hour = parseInt(ret.hour, 10);
-        info.time.minute = parseInt(ret.minute, 10);
-        if (ret.ampm[0].toLowerCase() === 'p' && info.time.hour < 12)
-            info.time.hour += 12;
-        else if (ret.ampm[0].toLowerCase() === 'a' && info.time.hour === 12)
-            info.time.hour = 0;
-        info.name = ret.name;
-        ret = info;
-    } else
-        ret = line; // could not parse, so at least give the end user a chance to look at the raw listing themselves
+        g +=4;
+    });
 
-    return ret;
+    return file;
 }
 
 function parseMList(line) {
