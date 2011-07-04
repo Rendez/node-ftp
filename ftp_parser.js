@@ -47,7 +47,6 @@ var RE_UnixEntry = new RegExp(
 // 04-27-00  09:09PM       <DIR>          licensed
 // 07-18-00  10:16AM       <DIR>          pub
 // 04-14-00  03:47PM                  589 readme.htm
-
 var RE_DOSEntry = new RegExp(
     "(\\S+)\\s+(\\S+)\\s+"
     + "(<DIR>)?\\s*"
@@ -55,14 +54,14 @@ var RE_DOSEntry = new RegExp(
     + "(\\S.*)"
 );
 
-var RE_VMSEntry = new RegExp(
-    "(.*;[0-9]+)\\s*"
-    + "(\\d+)/\\d+\\s*"
-    + "(\\S+)\\s+(\\S+)\\s+"
-    + "\\[(([0-9$A-Za-z_]+)|([0-9$A-Za-z_]+),([0-9$a-zA-Z_]+))\\]?\\s*"
-    + "\\([a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*\\)"
-);
-
+// Not used for now
+// var RE_VMSEntry = new RegExp(
+//     "(.*;[0-9]+)\\s*"
+//     + "(\\d+)/\\d+\\s*"
+//     + "(\\S+)\\s+(\\S+)\\s+"
+//     + "\\[(([0-9$A-Za-z_]+)|([0-9$A-Za-z_]+),([0-9$a-zA-Z_]+))\\]?\\s*"
+//     + "\\([a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*,[a-zA-Z]*\\)"
+// );
 
 var MONTHS = [null, "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -79,6 +78,14 @@ var USER_ACCESS         = 0;
 var GROUP_ACCESS        = 1;
 var WORLD_ACCESS        = 2;
 
+/**
+ * Parses standard FTP replies. Please note that this only involves replies in
+ * the form of <code> <message>. It doesn't parse file listings or non-standard
+ * extensions.
+ *
+ * @param lines {Array} FTP entries (responses)
+ * @returns {Array} Processed entries
+ */
 exports.parseResponses = function(lines) {
     if (!_.isArray(lines))
         throw new TypeError("The parameter should be an Array");
@@ -135,8 +142,11 @@ exports.parseResponses = function(lines) {
 };
 
 exports.processDirLines = function(lines, type) {
+    var i, result;
     var results = [];
-    for (var i=0,result,len=lines.length; i<len; ++i) {
+    var len = lines.length;
+
+    for (i=0; i < len; ++i) {
         if (lines[i].length) {
             if (type === 'LIST')
                 result = parseList(lines[i]);
@@ -153,6 +163,13 @@ exports.getGroup = function(code) {
     return parseInt(code / 10) % 10;
 };
 
+/**
+ * Selects which parser to use depending on the first character of the line to
+ * parse.
+ *
+ * @param entry {String} FTP file entry line
+ * @returns {Object} Parsed object with the file entry properties
+ */
 exports.entryParser = function(entry) {
     var c = entry[0];
 
