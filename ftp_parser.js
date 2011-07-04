@@ -142,21 +142,21 @@ exports.parseResponses = function(lines) {
 };
 
 exports.processDirLines = function(lines, type) {
-    var i, result;
-    var results = [];
-    var len = lines.length;
+    var processed = [];
+    var t;
 
-    for (i=0; i < len; ++i) {
-        if (lines[i].length) {
-            if (type === 'LIST')
-                result = parseList(lines[i]);
-            else if (type === 'MLSD')
-                result = parseMList(lines[i], numFields);
-
-            results.push([(typeof result === 'string' ? 'raw' : 'entry'), result, lines[i]]);
+    lines.forEach(function(line) {
+        if (line.length) {
+            if (type === 'LIST') {
+                var t = _.isString(entryParser(line)) ? 'raw' : 'entry';
+                result.push([t, result, line]);
+            }
+            //else if (type === 'MLSD')
+                //result = parseMList(lines[i], numFields);
         }
-    }
-    return results;
+    });
+
+    return processed;
 };
 
 exports.getGroup = function(code) {
