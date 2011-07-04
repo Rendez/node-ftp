@@ -8,7 +8,7 @@
   "keywords": [ "ftp", "client", "transfer" ],
   "licenses": [
     { "type": "MIT", "url": "http://github.com/mscdex/node-ftp/raw/master/LICENSE" },
-    { "type": "MIT", "url": "http://github.com/Rendez/node-ftp/raw/master/LICENSE" }
+    { "type": "MIT", "url": "http://github.com/ajaxorg/node-ftp/raw/master/LICENSE" }
   ],
   "repository" : { "type": "git", "url": "http://github.com/Rendez/node-ftp.git" }
 }
