@@ -1,14 +1,6 @@
-/*
- * @package node-ftp
- * @subpackage node-ftp
- * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
- * @author Luis Merino <mail AT luismerino DOT name>
- * @contributor Sergi Mansilla <sergi AT ajax DOT org>
- *
- * See RFC at http://www.w3.org/Protocols/rfc959
- */
+// See RFC at http://www.w3.org/Protocols/rfc959
+
 var _ = require("./support/underscore");
-var reKV = /(.+?)=(.+?);/;
 
 var RE_SERVER_RESPONSE = /^(\d\d\d)(.*)/;
 
@@ -51,7 +43,12 @@ var RE_UnixEntry = new RegExp(
     + "(.*)"
 );
 
-var RE_NTEntry = new RegExp(
+// MSDOS format
+// 04-27-00  09:09PM       <DIR>          licensed
+// 07-18-00  10:16AM       <DIR>          pub
+// 04-14-00  03:47PM                  589 readme.htm
+
+var RE_DOSEntry = new RegExp(
     "(\\S+)\\s+(\\S+)\\s+"
     + "(<DIR>)?\\s*"
     + "([0-9]+)?\\s+"
@@ -157,86 +154,147 @@ exports.getGroup = function(code) {
 };
 
 exports.entryParser = function(entry) {
-    var target, writePerm, readPerm, execPerm;
-    var group = entry.match(RE_UnixEntry);
+    var c = entry[0];
 
-    if (group) {
-        var type = group[1];
-        var hardLinks = group[15];
-        var usr = group[16];
-        var grp = group[17];
-        var size = group[18];
-        var date = new Date(group[19] + " " + group[20]).getTime();
-        var name = group[21];
-        var endtoken = group[22];
+    //if c == '+':
+    //    return self._parse_EPLF(buf)
+
+    if ('bcdlps-'.indexOf(c) > -1)
+        return parsers.unix(entry);
+
+    else if ('0123456789'.indexOf(c) > -1)
+        return parsers.msdos(entry);
+
+    else {
+        console.log("Unrecognized format");
+        return null;
     }
+};
 
-    var pos = name.indexOf(' -> ');
-    if (pos > -1) {
-        name   = name.substring(0, pos);
-        target = name.substring(pos + 4);
-    }
+var parsers = {
+    unix: function(entry) {
+        var target, writePerm, readPerm, execPerm;
+        var group = entry.match(RE_UnixEntry);
 
-    switch (type[0]) {
-        case 'd':
-            type = DIRECTORY_TYPE;
-            break;
-        case 'l':
-            type = SYMBOLIC_LINK_TYPE;
-            break;
-        case 'b':
-        case 'c':
-            // break; - fall through
-        case 'f':
-        case '-':
-            type = FILE_TYPE;
-            break;
-        default:
-            type = UNKNOWN_TYPE;
-    }
+        if (group) {
+            var type = group[1];
+            var hardLinks = group[15];
+            var usr = group[16];
+            var grp = group[17];
+            var size = group[18];
+            var date = new Date(group[19] + " " + group[20]).getTime();
+            var name = group[21];
+            var endtoken = group[22];
+        }
 
-    var file = {
-        name: name,
-        type: type,
-        time: date,
-        size: size,
-        owner: usr,
-        group: grp
-    };
+        var pos = name.indexOf(' -> ');
+        if (pos > -1) {
+            name   = name.substring(0, pos);
+            target = name.substring(pos + 4);
+        }
 
-    if (target) file.target = target;
+        switch (type[0]) {
+            case 'd':
+                type = DIRECTORY_TYPE;
+                break;
+            case 'l':
+                type = SYMBOLIC_LINK_TYPE;
+                break;
+            case 'b':
+            case 'c':
+                // break; - fall through
+            case 'f':
+            case '-':
+                type = FILE_TYPE;
+                break;
+            default:
+                type = UNKNOWN_TYPE;
+        }
 
-    var g = 4;
-    ["user", "group", "other"].forEach(function(access) {
-        // Use != '-' to avoid having to check for suid and sticky bits
-        readPerm  = group[g] !== "-";
-        writePerm = group[g + 1] !== "-";
-
-        var execPermStr = group[g + 2];
-        execPerm = (execPermStr !== "-") && !(/[A-Z]/.test(execPermStr[0]));
-
-        file[access + "Permissions"] = {
-            read : readPerm,
-            write: writePerm,
-            exec : execPerm
+        var file = {
+            name: name,
+            type: type,
+            time: date,
+            size: size,
+            owner: usr,
+            group: grp
         };
 
-        g +=4;
-    });
+        if (target) file.target = target;
 
-    return file;
+        var g = 4;
+        ["user", "group", "other"].forEach(function(access) {
+            // Use != '-' to avoid having to check for suid and sticky bits
+            readPerm  = group[g] !== "-";
+            writePerm = group[g + 1] !== "-";
+
+            var execPermStr = group[g + 2];
+
+            file[access + "Permissions"] = {
+                read : readPerm,
+                write: writePerm,
+                exec : (execPermStr !== "-") && !(/[A-Z]/.test(execPermStr[0]))
+            };
+
+            g +=4;
+        });
+
+        return file;
+    },
+    msdos: function(entry) {
+        var group = entry.match(RE_DOSEntry);
+
+        function replacer(str, hour, min, ampm, offset, s) {
+            return hour + ":" + min + " " + ampm;
+        }
+        var time = group[2].replace(/(\d{2}):(\d{2})([AP]M)/, replacer);
+
+        if (group) {
+            var date = new Date(group[1] + " " + time).getTime();
+            var dirString = group[3];
+            var size = group[4];
+            var name = group[5];
+
+            if (null == name || name === "." || name === "..")
+                return null;
+
+            if (dirString === "<DIR>") {
+                type = DIRECTORY_TYPE;
+                size = 0;
+            }
+            else {
+                type = FILE_TYPE;
+            }
+
+            return {
+                name: name,
+                type: type,
+                time: date,
+                size: size
+            }
+        }
+    }
 }
 
-function parseMList(line) {
-    var ret, result = line.trim().split(reKV);
+/*
+ * MLSx commands are not being used for now.
+ *
+ * http://rfc-ref.org/RFC-TEXTS/3659/chapter7.html
+ * http://www.rhinosoft.com/newsletter/NewsL2005-07-06.asp?prod=rs
+ *
+var reKV = /(.+?)=(.+?);/;
+exports.parseMList = function(line) {
+    var ret;
+    var result = line.trim().split(reKV);
 
     if (result && result.length > 0) {
         ret = {};
-        if (result.length === 1)
+        if (result.length === 1) {
             ret.name = result[0].trim();
+        }
         else {
-            var i = 1;
-            for (var k,v,len=result.length; i<len; i+=3) {
+            var i, k, v, len = result.length;
+            for (i = 1; i < len; i += 3) {
                 k = result[i];
                 v = result[i+1];
                 ret[k] = v;
@@ -248,4 +306,4 @@ function parseMList(line) {
 
     return ret;
 }
-
+*/

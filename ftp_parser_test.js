@@ -54,7 +54,7 @@ module.exports = {
         next();
     },
 
-    "test ftp LIST responses" : function(next) {
+    "test ftp unix LIST responses" : function(next) {
         var unixEntries = [
             {
                 line: "-rw-r--r--   1 root     other     531 Jan 29 03:26 README",
@@ -167,7 +167,98 @@ module.exports = {
         });
 
         next();
+    },
+    "test ftp windows/DOS LIST responses" : function(next) {
+        var dosEntries = [
+            {
+                line: '04-27-00  09:09PM       <DIR>          licensed',
+                type: 1,
+                size: 0,
+                time: 956862540000,
+                name: 'licensed',
+            },
+            {
+                line: '11-18-03  10:16AM       <DIR>          pub',
+                type: 1,
+                size: 0,
+                time: 1069146960000,
+                name: 'pub',
+            },
+            {
+                line: '04-14-99  03:47PM                  589 readme.htm',
+                type: 0,
+                size: 589,
+                time: 924097620000,
+                name: 'readme.htm'
+            }
+        ];
+
+        dosEntries.forEach(function(entry) {
+            var result = Parser.entryParser(entry.line);
+
+            assert.equal(result.type, entry.type);
+            assert.equal(result.size, entry.size);
+            assert.equal(result.name, entry.name);
+            assert.equal(result.time, entry.time);
+
+            next();
+        });
     }
+
+/*
+ * We are not supporting MLSx commands yet
+ *
+ * http://rfc-ref.org/RFC-TEXTS/3659/chapter7.html
+ * http://www.rhinosoft.com/newsletter/NewsL2005-07-06.asp?prod=rs
+ *
+    "test parse MLSD command lines" : function(next) {
+        var lines = [
+            {
+                line: "Type=file;Size=17709913;Modify=20050502182143; Choices.mp3",
+                Type: "file",
+                Size: "17709913",
+                Modify: "20050502182143",
+                name: "Choices.mp3"
+            },
+            {
+                line: "Type=cdir;Perm=el;Unique=keVO1+ZF4; test",
+                type: "file",
+                perm: "el",
+
+            },
+            {
+                line: "Type=pdir;Perm=e;Unique=keVO1+d?3; .."
+            }
+        ];
+
+
+
+
+        //"Type=cdir;Perm=el;Unique=keVO1+ZF4; test",
+        //"Type=pdir;Perm=e;Unique=keVO1+d?3; ..",
+        //"Type=OS.unix=slink:/foobar;Perm=;Unique=keVO1+4G4; foobar",
+        //"Type=OS.unix=chr-13/29;Perm=;Unique=keVO1+5G4; device",
+        //"Type=OS.unix=blk-11/108;Perm=;Unique=keVO1+6G4; block",
+        //"Type=file;Perm=awr;Unique=keVO1+8G4; writable",
+        //"Type=dir;Perm=cpmel;Unique=keVO1+7G4; promiscuous",
+        //"Type=dir;Perm=;Unique=keVO1+1t2; no-exec",
+        //"Type=file;Perm=r;Unique=keVO1+EG4; two words",
+        //"Type=file;Perm=r;Unique=keVO1+IH4;  leading space",
+        //"Type=file;Perm=r;Unique=keVO1+1G4; file1",
+        //"Type=dir;Perm=cpmel;Unique=keVO1+7G4; incoming",
+        //"Type=file;Perm=r;Unique=keVO1+1G4; file2",
+        //"Type=file;Perm=r;Unique=keVO1+1G4; file3",
+        //"Type=file;Perm=r;Unique=keVO1+1G4; file4",
+
+        var parsed = Parser.parseMList(line);
+
+        assert.equal("file", parsed.Type);
+        assert.equal("17709913", parsed.Size);
+        assert.equal("20050502182143", parsed.Modify);
+        assert.equal("Choices.mp3", parsed.name);
+        next();
+    }
+*/
 }
 
 !module.parent && require("./support/async/lib/test").testcase(module.exports, "FTP Parser").exec();
