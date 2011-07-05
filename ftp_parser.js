@@ -165,10 +165,6 @@ exports.processDirLines = function(lines, type) {
     return processed;
 };
 
-exports.getGroup = function(code) {
-    return parseInt(code / 10) % 10;
-};
-
 /**
  * Selects which parser to use depending on the first character of the line to
  * parse.
