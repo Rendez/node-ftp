@@ -148,6 +148,7 @@ exports.parseResponses = function(lines) {
 };
 
 exports.processDirLines = function(lines, type) {
+<<<<<<< HEAD
     var processed = [];
     var t;
 

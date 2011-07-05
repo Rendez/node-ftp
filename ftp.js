@@ -1,7 +1,7 @@
-var Util = require('util'),
-    Net = require('net'),
-    EventEmitter = require('events').EventEmitter,
-    Parser = require('./ftp_parser'),
+var Util = require("util"),
+    Net = require("net"),
+    EventEmitter = require("events").EventEmitter,
+    Parser = require("./ftp_parser"),
     debug = function(){}
 
 var FTP = module.exports = function(options) {
@@ -12,10 +12,8 @@ var FTP = module.exports = function(options) {
     this.$pasvIP = null;
     this.$feat = null;
     this.$queue = [];
-    //this.$pasvQueue = [];
-    //this.$pasvStack = [];
     this.options = {
-        host: 'localhost',
+        host: "localhost",
         port: 21,
         /*secure: false,*/
         connTimeout: 10000, // in ms
@@ -23,22 +21,46 @@ var FTP = module.exports = function(options) {
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
     };
-    extend(true, this.options, options);
+    this.options = $merge(this.options, options);
     // Set TimeZone hour difference to get the server's LIST offset.
     FTP.TZHourDiff = this.options.TZHourDiff || 0;
+    // Current working directory
+    FTP.Cwd = this.options.cwd || "/";
     
-    if (typeof this.options.debug === 'function')
+    if (typeof this.options.debug === "function")
         debug = this.options.debug;
 };
 
 Util.inherits(FTP, EventEmitter);
 
 (function() {
+    this.EMPTY_PATH = "";
+    
     function makeError(code, text) {
-        var err = new Error('Server Error: ' + code + (text ? ' ' + text : ''));
+        var err = new Error("Server Error: " + code + (text ? " " + text : ""));
         err.code = code;
         err.text = text;
         return err;
+    }
+    
+    // Many FTP implementations are not compatible with paths containing whitespaces,
+    // therefore we must CWD before commands.
+    this.$changeToPath = function(path, next) {
+        var parts = path.split("/");
+        var node = parts.pop();
+        path = parts.join("/").replace(/[\/]+$/, "");
+        if (path == FTP.Cwd)
+            return next(FTP.Cwd, node);
+        
+        if (path.charAt(0) != "/")
+            path = "/" + path;
+        
+        this.cwd(path, function(err) {
+            if (err)
+                return next(err);
+            
+            next(FTP.Cwd = path, node);
+        });
     }
     
     this.end = function() {
@@ -50,8 +72,9 @@ Util.inherits(FTP, EventEmitter);
         this.$socket = null;
         this.$dataSock = null;
     };
+    
     this.connect = function(port, host) {
-        var self = this, socket = this.$socket, curData = '';
+        var _self = this, socket = this.$socket, curData = "";
         this.options.port = port = port || this.options.port;
         this.options.host = host = host || this.options.host;
 
@@ -63,47 +86,44 @@ Util.inherits(FTP, EventEmitter);
             this.$dataSock.end();
 
         var connTimeout = setTimeout(function() {
-            if (self.$socket) {
-                self.$socket.destroy();
-                self.$socket = null;
+            if (_self.$socket) {
+                _self.$socket.destroy();
+                _self.$socket = null;
             }
-            self.emit('timeout');
+            _self.emit("timeout");
         }, this.options.connTimeout);
         
         socket = this.$socket = Net.createConnection(port, host);
-        socket.setEncoding('utf8');
+        socket.setEncoding("utf8");
         socket.setTimeout(0);
-        socket.on('connect', function() {
+        socket.on("connect", function() {
             clearTimeout(connTimeout);
-            if (debug)
-                debug('Connected');
+            if (debug) debug("Connected");
         });
-        socket.on('timeout', function(err) {
-            if (debug)
-                debug('Socket timeout');
-            this.emit('close');
-            self.emit('timeout', new Error('The connection to the server timed out'));
+        socket.on("timeout", function(err) {
+            if (debug) debug("Socket timeout");
+            this.emit("close");
+            _self.emit("timeout", new Error("The connection to the server timed out"));
         });
-        socket.on('end', function() {
-            if (debug)
-                debug('Disconnected');
-            if (self.$dataSocket)
+        socket.on("end", function() {
+            if (debug) debug("Disconnected");
+            if (_self.$dataSocket)
                 self.$dataSocket.end();
-            self.emit('end');
+            _self.emit("end");
         });
-        socket.on('close', function(hasError) {
+        socket.on("close", function(hasError) {
             clearTimeout(connTimeout);
-            if (self.$dataSocket)
-                self.$dataSocket.end();
-            self.$state = null;
-            self.emit('close', hasError);
+            if (_self.$dataSocket)
+                _self.$dataSocket.end();
+            _self.$state = null;
+            _self.emit("close", hasError);
         });
-        socket.on('error', function(err) {
-            self.end();
-            self.$state = null;
-            self.emit('error', err);
+        socket.on("error", function(err) {
+            _self.end();
+            _self.$state = null;
+            _self.emit("error", err);
         });
-        socket.on('data', function(data) {
+        socket.on("data", function(data) {
             curData += data;
             if (/(?:\r\n|\n)$/.test(curData)) {
                 var resps = Parser.parseResponses(curData.split(/\r\n|\n/)),
@@ -112,41 +132,39 @@ Util.inherits(FTP, EventEmitter);
                 if (resps.length === 0)
                     return;
                 
-                curData = '';
+                curData = "";
                 if (debug) {
                     for (var i=0, len=resps.length; i < len; ++i)
-                        debug('Response: code = ' + resps[i][0]
-                            + (resps[i][1] ? '; text = ' + Util.inspect(resps[i][1]) : ''));
+                        debug("Response: code = " + resps[i][0]
+                            + (resps[i][1] ? "; text = " + Util.inspect(resps[i][1]) : ""));
                 }
-
                 for (var i=0, code, text, group, len = resps.length; i < len; ++i) {
                     code = resps[i][0];
                     text = resps[i][1];
                     group = Parser.getGroup(code); // second digit
 
-                    if (!self.$state) {
+                    if (!_self.$state) {
                         if (code === 220) {
-                            self.$state = 'connected';
-                            self.send('FEAT', function(err, text) {
+                            _self.$state = "connected";
+                            _self.send("FEAT", function(err, text) {
                                 if (!err && /\r\n|\n/.test(text)) {
                                     var feats = text.split(/\r\n|\n/);
                                     feats.shift(); // "Features:"
                                     feats.pop(); // "End"
                                     for (var i=0, sp, len = feats.length; i < len; ++i) {
                                         feats[i] = feats[i].trim();
-                                        if ((sp = feats[i].indexOf(' ')) > -1)
-                                            self.$feat[feats[i].substring(0, sp).toUpperCase()] = feats[i].substring(sp + 1);
+                                        if ((sp = feats[i].indexOf(" ")) > -1)
+                                            _self.$feat[feats[i].substring(0, sp).toUpperCase()] = feats[i].substring(sp + 1);
                                         else
-                                            self.$feat[feats[i].toUpperCase()] = true;
+                                            _self.$feat[feats[i].toUpperCase()] = true;
                                     }
-                                    if (debug)
-                                        debug('Features: ' + Util.inspect(self.$feat));
-                                    self.emit('feat', self.$feat);
+                                    if (debug) debug("Features: " + Util.inspect(_self.$feat));
+                                    _self.emit("feat", _self.$feat);
                                 }
-                                self.emit('connect', self.options.host, self.options.port);
+                                _self.emit("connect", _self.options.host, _self.options.port);
                             });
                         } else {
-                             self.emit('error', new Error('Did not receive service ready response'));
+                             _self.emit("error", new Error("Did not receive service ready response"));
                         }
                         return;
                     }
@@ -154,7 +172,7 @@ Util.inherits(FTP, EventEmitter);
                     if (code >= 200 && !processNext) {
                         processNext = true;
                         if (code >= 500)
-                            return self.$executeNext(makeError(code, text));
+                            return _self.$executeNext(makeError(code, text));
                     }
                     else if (code < 200)
                         continue;
@@ -162,203 +180,209 @@ Util.inherits(FTP, EventEmitter);
                     switch(group) {
                         case 0: // all in here are errors except 200
                             if (code === 200)
-                                self.$executeNext();
+                                _self.$executeNext();
                             else
-                                self.$executeNext(makeError(code, text));
+                                _self.$executeNext(makeError(code, text));
                         break;
                         case 1: // informational group
                             if (code >= 211 && code <= 215)
-                                self.$executeNext(text);
+                                _self.$executeNext(text);
                             else
-                                self.$executeNext(makeError(code, text));
+                                _self.$executeNext(makeError(code, text));
                         break;
                         case 2: // control/data connection-related
                             if (code === 226) {
                                 // closing data connection, file action request successful
-                                self.$executeNext();
+                                _self.$executeNext();
                             } else if (code === 227) {
                                 // server entering passive mode
                                 var parsed = text.match(/([\d]+),([\d]+),([\d]+),([\d]+),([-\d]+),([-\d]+)/);
                                 if (!parsed)
-                                    throw new Error('Could not parse passive mode response: ' + text);
-                                self.$pasvIP = parsed[1] + '.' + parsed[2] + '.' + parsed[3] + '.' + parsed[4];
-                                self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
+                                    throw new Error("Could not parse passive mode response: " + text);
+                                _self.$pasvIP = parsed[1] + "." + parsed[2] + "." + parsed[3] + "." + parsed[4];
+                                _self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
                                 // call $executeNext after having dataSocket connected, then wait for response.
-                                return self.$pasvConnect();
+                                return _self.$pasvConnect();
                             } else
-                                self.$executeNext(makeError(code, text));
+                                _self.$executeNext(makeError(code, text));
                         break;
                         case 3: // authentication-related
                             if (code === 331 || code === 230)
-                                self.$executeNext((code === 331));
+                                _self.$executeNext((code === 331));
                             else
-                                self.$executeNext(makeError(code, text));
+                                _self.$executeNext(makeError(code, text));
                             
                         break;
                         /*case 4: // not used */
                         case 5: // server file system state
-                            if (code === 250 && self.$queue.length && self.$queue[0][0] === 'MLST')
-                                self.$executeNext(text);
+                            if (code === 250 && _self.$queue.length && _self.$queue[0][0] === "MLST")
+                                _self.$executeNext(text);
                             else if (code === 250 || code === 350)
-                                self.$executeNext();
+                                _self.$executeNext();
                             else if (code === 257) {
                                 var path = text.match(/(?:^|\s)\"(.*)\"(?:$|\s)/);
                                 if (path)
                                     path = path[1].replace(/\"\"/g, '"');
                                 else
                                     path = text;
-                                self.$executeNext(path);
+                                _self.$executeNext(path);
                             } else
-                                self.$executeNext(makeError(code, text));
+                                _self.$executeNext(makeError(code, text));
                         break;
                     }
                 }
-                if (processNext) self.send();
+                if (processNext) _self.send();
             }
         });
     };
     /** Standard features */
     this.auth = function(user, password, callback) {
-        if (this.$state !== 'connected')
+        if (this.$state !== "connected")
             return false;
         
-        if (typeof user === 'function') {
+        if (typeof user === "function") {
             callback = user;
-            user = 'anonymous';
-            password = 'anonymous@';
-        } else if (typeof password === 'function') {
+            user = "anonymous";
+            password = "anonymous@";
+        } else if (typeof password === "function") {
             callback = password;
-            password = 'anonymous@';
+            password = "anonymous@";
         }
-        var cmds = [['USER', user], ['PASS', password]], cur = 0, self = this,
+        var cmds = [["USER", user], ["PASS", password]], cur = 0, _self = this,
             next = function(err, result) {
                 if (err)
                     return callback(err);
 
                 if (result === true) {
-                    if (!self.send(cmds[cur][0], cmds[cur][1], next))
-                        return callback(new Error('Connection severed'));
+                    if (!_self.send(cmds[cur][0], cmds[cur][1], next))
+                        return callback(new Error("Connection severed"));
                     ++cur;
                 } else if (result === false) { // logged in
                     cur = 0;
-                    self.$state = 'authorized';
-                    if (!self.send('TYPE', 'I', callback))
-                        return callback(new Error('Connection severed'));
+                    _self.$state = "authorized";
+                    if (!_self.send("TYPE", "I", callback))
+                        return callback(new Error("Connection severed"));
                 }
             };
         
-        this.emit('auth');
+        this.emit("auth");
         next(null, true);
         return true;
     };
     this.pwd = function(callback) {
-        return (this.$state !== 'authorized')
+        return (this.$state !== "authorized")
             ? false
-            : this.send('PWD', callback)
+            : this.send("PWD", callback)
     };
     this.cwd = function(path, callback) {
-        return (this.$state !== 'authorized')
+        return (this.$state !== "authorized")
             ? false
-            : this.send('CWD', path, callback);
+            : this.send("CWD", path, callback);
     };
     /** File functionality */
     this.get = function(path, callback) {
-        if (this.$state !== 'authorized')
+        if (this.$state !== "authorized")
             return false;
 
-        var self = this;
-        return this.send('PASV', function(err, stream) {
+        var _self = this;
+        return this.send("PASV", function(err, stream) {
             if (err)
                 return callback(err);
-                
+
             var buffer = [];
-            stream.on('data', function(chunk) {
+            stream.on("data", function(chunk) {
                 buffer.push(chunk);
             });
+            _self.$changeToPath(path, function(path, node) {
+                var result = _self.send("RETR", node, function(err) {
+                    if (err)
+                        return callback(err);
 
-            var result = self.send('RETR', path, function(err) {
-                if (err)
-                    return callback(err);
-                
-                callback(null, new Buffer(buffer.join('')));
+                    callback(undefined, new Buffer(buffer.join("")));
+                });
+                if (!result)
+                    callback(new Error("Connection severed"));
             });
-            if (!result)
-                callback(new Error('Connection severed'));
         });
     };
-    this.put = function(buffer, destpath, callback) {
-        if (this.$state !== 'authorized')
+    this.put = function(buffer, destpath, callback, append) {
+        if (this.$state !== "authorized")
             return false;
 
         if (!Buffer.isBuffer(buffer))
-            throw new Error('Write data must be an instance of Buffer');
+            throw new Error("Write data must be an instance of Buffer");
 
-        var self = this;
-        return this.send('PASV', function(err, stream) {
+        var _self = this;
+        return this.send("PASV", function(err, stream) {
             if (err)
                 return callback(err);
             
-            var res = self.send('STOR', destpath, callback);
-            stream.write(buffer, function() {
-                stream._shutdown();
+            _self.$changeToPath(destpath, function(path, node) {
+                var res = _self.send(append ? "APPE" : "STOR", node, callback);
+                stream.write(buffer, function() {
+                    stream._shutdown();
+                });
+                if (!res)
+                    callback(new Error("Connection severed"));
             });
-            if (!res)
-                callback(new Error('Connection severed'));
         });
     };
     this.append = function(buffer, destpath, callback) {
-        if (this.$state !== 'authorized')
-            return false;
-
-        if (!Buffer.isBuffer(buffer))
-            throw new Error('Write data must be an instance of Buffer');
-
-        var self = this;
-        return this.send('PASV', function(err, stream) {
-            if (err)
-                return callback(err);
-            
-            var res = self.send('APPE', destpath, callback);
-            stream.write(buffer, function() {
-                stream._shutdown();
-            });
-            if (!res)
-                callback(new Error('Connection severed'));
-        });
+        this.put.apply(this, ([].slice.call(arguments)).push(true));
     };
     this.copy = function(origpath, destpath, callback) {
-        if (this.$state !== 'authorized')
+        if (this.$state !== "authorized")
             return false;
+        
+        callback();
         //@todo dir copy involves deep recursive copying
     };
-    this['delete'] = function(path, callback) {
-        return (this.$state !== 'authorized')
-            ? false
-            : this.send('DELE', path, callback);
+    this["delete"] = function(path, callback) {
+        if (this.$state !== "authorized")
+            return false;
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("DELE", node, callback);
+        });
     };
     this.rename = function(pathFrom, pathTo, callback) {
-        if (this.$state !== 'authorized')
+        if (this.$state !== "authorized")
             return false;
 
-        var self = this;
-        return this.send('RNFR', pathFrom, function(err) {
-            if (err)
-                return callback(err);
-
-            if (!self.send('RNTO', pathTo, callback))
-                callback(new Error('Connection severed'));
+        var _self = this, ret;
+        this.$changeToPath(pathFrom, function(path, node) {
+            _self.send("RNFR", node, function(err) {
+                if (err)
+                    return callback(err);
+                
+                node = pathTo.split("/").pop().join("").replace(/[\/]+$/, "");
+                if (path.charAt(0) != "/")
+                    node = "/" + node;
+                
+                if (!_self.send("RNTO", node, callback))
+                    callback(new Error("Connection severed"));
+            });
         });
     };
     /** Directory functionality */
     this.mkdir = function(path, callback) {
-        return (this.$state !== 'authorized')
-            ? false
-            : this.send('MKD', path, callback);
+        if (this.$state !== "authorized")
+            return false;
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("MKD", node, callback);
+        });
     };
     this.rmdir = function(path, callback) {
-        return (this.$state !== 'authorized')
-            ? false
-            : this.send('RMD', path, callback);
+        if (this.$state !== "authorized")
+            return false;
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("RMD", node, callback);
+        });
     };
     /** Convenience methods */
     var Stat = function(struct) {
@@ -379,14 +403,14 @@ Util.inherits(FTP, EventEmitter);
             for (var t in struct.time)
                 joinTimeArr.push(struct.time[t]);
             
-            if (type === undefined || type === 'LIST') {
+            if (type === undefined || type === "LIST") {
                 var intHours = FTP.TZHourDiff < 0 ? FTP.TZHourDiff * -1 : FTP.TZHourDiff;
-                var hours = FTP.TZHourDiff > 0 ? ('-0'+intHours+'00') : ('+0'+intHours+'00');
+                var hours = FTP.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
                 
-                return new Date(joinDateArr.join(' ') +' '+ joinTimeArr.join(':') +' GMT '+ hours);
+                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" GMT "+ hours);
             }
-            else if (type === 'MLSD')
-                return new Date(joinDateArr.join(' ') +' '+ joinTimeArr.join(':') +' UTC');
+            else if (type === "MLSD")
+                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" UTC");
         };
         /**
         * @type {Boolean}
@@ -432,96 +456,75 @@ Util.inherits(FTP, EventEmitter);
         };
     };
     this.readdir = function(path, callback) {
-        var self = this;
-        if (debug)
-            debug('READ DIR ' + path);
-            
-        this.list(path, function(err, emitter) {
-            if (err)
-                return callback(err);
-                
-            var nodes = [];
-            emitter.on('entry', function(entry) {
-                var item = new Stat(entry);
-                //var p = item.name;
-                nodes.push(item);
-                //nodes.push(p.substr(p.lastIndexOf("/") + 1));
-            });
-            emitter.on('error', function(err) { // Under normal circumstances this shouldn't happen.
-                self.$socket.end();
-                callback('Error during LIST(): ' + Util.inspect(err));
-            });
-            emitter.on('success', function() {
-                callback(null, nodes);
+        if (debug) debug("READ DIR " + path);
+        
+        var _self = this;        
+        this.$changeToPath(path, function(path, node) {
+            _self.list(path, function(err, emitter) {
+                if (err)
+                    return callback(err);
+
+                var nodes = [];
+                emitter.on("entry", function(entry) {
+                    nodes.push(new Stat(entry));
+                });
+                emitter.on("error", function(err) { // Under normal circumstances this shouldn't happen.
+                    _self.$socket.end();
+                    callback("Error during LIST(): " + Util.inspect(err));
+                });
+                emitter.on("success", function() {
+                    callback(null, nodes);
+                });
             });
         });
     };
-    this.stat = this.lstat = this.fstat = function(path, callback) {
-        var self = this,
-            parts = path.split("/"),
-            node = parts.pop(),
-            root = parts.join("/");
-        
-        if (root.charAt(0) != "/") {
-            this.pwd(function(err, pwd) {
-                if (err || !pwd)
-                    return callback(err || pwd);
-                pwd = pwd.replace(/[\/]+$/, "");
-                root = pwd + "/" + root.replace(/^[\/]+/, "");
-                afterPwd();
-            });
-        } else
-            afterPwd();
 
-        function afterPwd() {
-            // List and add to first matching result to the list
-            self.list(root, function(err, emitter) {
+    this.stat = this.lstat = this.fstat = function(path, callback) {
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.list(FTP.EMPTY_PATH, function(err, emitter) {
                 if (err)
-                    return callback(err); // Error('Unable to retrieve node status', root);
+                    return callback(err);
                 
                 var list = [];
-                emitter.on('entry', function(entry) {
+                emitter.on("entry", function(entry) {
                     entry = new Stat(entry);
                     if (entry.name === node)
                         list.push(entry);
                 });
-                emitter.on('error', function(err) { // Under normal circumstances this shouldn't happen.
-                    self.$socket.end();
-                    callback('Error during LIST(): ' + Util.inspect(err));
+                emitter.on("error", function(err) { // Under normal circumstances this shouldn"t happen.
+                    _self.$socket.end();
+                    callback("Error during LIST(): " + Util.inspect(err));
                 });
-                emitter.on('success', function() {
+                emitter.on("success", function() {
                     if (list.length === 0)
-                        return callback("File at location " + path + " not found");
+                        return callback("File at location " + path + "/" + node + " not found");
                     callback(null, list[0]);
                 });
             });
-        }
+        });
     };
-    /** FTP true list command */
+    /** FTP true 'ls' command */
     this.list = function(path, callback) {
-        if (this.$state !== 'authorized')
+        if (this.$state !== "authorized")
             return false;
 
-        if (typeof path === 'function') {
+        if (typeof path === "function") {
             callback = path;
             path = undefined;
         }
-        var self = this, emitter = new EventEmitter(), params;
-        
-        
-        if (params = this.$feat['MLST']) { // MLSD
+        var _self = this, emitter = new EventEmitter(), params;
+        /*if (params = this.$feat['MLST']) {
             var type = undefined,
             cbTemp = function(err, text) {
                 if (err) {
-                    if (!type && e.code === 550) { // path was a file not a dir.
+                    if (!type && err.code === 550) { // path was a file not a dir.
                         type = 'file';
-                        console.log('try MLST');
                         if (!self.send('MLST', path, cbTemp))
                             return callback(new Error('Connection severed'));
                         return;
-                    } else if (!type && e.code === 425) {
+                    } else if (!type && err.code === 425) {
                         type = 'pasv';
-                        console.log('try MLSD');
                         if (!self.$pasvGetLines(emitter, 'MLSD', cbTemp))
                             return callback(new Error('Connection severed'));
                         return;
@@ -558,90 +561,101 @@ Util.inherits(FTP, EventEmitter);
                 return this.send('MLSD', path, cbTemp);
             else
                 return this.send('MLSD', cbTemp);
-        } else {
+        } else {*/
             // Otherwise use the standard way of fetching a listing
-            this.$pasvGetLines(emitter, 'LIST', function(err) {
+            this.$pasvGetLines(emitter, "LIST", function(err) {
                 if (err)
                     return callback(err);
                 
                 var result,
                     cbTemp = function(err) {
                         if (err)
-                            return emitter.emit('error', err);
-                        emitter.emit('success');
+                            return emitter.emit("error", err);
+                        emitter.emit("success");
                     };
                 if (path)
-                    result = self.send('LIST', path, cbTemp);
+                    result = _self.send("LIST", path, cbTemp);
                 else
-                    result = self.send('LIST', cbTemp);
+                    result = _self.send("LIST", cbTemp);
                 if (result)
                     callback(undefined, emitter);
                 else
-                    callback(new Error('Connection severed'));
+                    callback(new Error("Connection severed"));
             });
-        }
+        //}
     };
     
     this.system = function(callback) {
-        return (this.$state !== 'authorized')
+        return (this.$state !== "authorized")
             ? false
-            : this.send('SYST', callback);
+            : this.send("SYST", callback);
     };
     this.status = function(callback) {
-        return (this.$state !== 'authorized')
+        return (this.$state !== "authorized")
             ? false
-            : this.send('STAT', callback);
+            : this.send("STAT", callback);
     };
     /** Extended features */
     this.chmod = function(path, mode, callback) {
-        return (this.$state !== 'authorized')
-            ? false
-            : this.send('SITE CHMOD', [mode, path].join(' '), callback);
+        if (this.$state !== "authorized")
+            return false;
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("SITE CHMOD", [mode, node].join(" "), callback);
+        });
     };
     this.size = function(path, callback) {
-      return (this.$state !== 'authorized' || !this.$feat['SIZE'])
-        ? false
-        : this.send('SIZE', path, callback);
+        if (this.$state !== "authorized" || !this.$feat["SIZE"])
+            return false;
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("SIZE", node, callback);
+        });
     };
     
     var reXTimeval = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d+)$/;
     
     this.lastMod = function(path, callback) {
-        if (this.$state !== 'authorized' || !this.$feat['MDTM'])
+        if (this.$state !== "authorized" || !this.$feat["MDTM"])
             return false;
         
-        return this.send('MDTM', path, function(err, text) {
-            if (err)
-                return callback(err);
-            
-            var val = reXTimeval.exec(text);
-            if (!val)
-                return callback(new Error('Invalid date/time format from server'));
-                
-            var date = {
-                year: parseInt(val[1], 10),
-                month: parseInt(val[2], 10),
-                date: parseInt(val[3], 10)
-            };
-            var time = {
-                hour: parseInt(val[4], 10),
-                minute: parseInt(val[5], 10),
-                second: parseFloat(val[6], 10)
-            };
-            var joinDateArr = [], joinTimeArr = [];
-            for (var d in date)
-                joinDateArr.push(date[d]);
-            for (var t in time)
-                joinTimeArr.push(time[t]);
-            
-            var mdtm = new Date(joinDateArr.join(' ') + ' ' + joinTimeArr.join(':') + ' GMT');
-            callback(undefined, mdtm);
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("MDTM", node, function(err, text) {
+                if (err)
+                    return callback(err);
+
+                var val = reXTimeval.exec(text);
+                if (!val)
+                    return callback(new Error("Invalid date/time format from server"));
+
+                var date = {
+                    year: parseInt(val[1], 10),
+                    month: parseInt(val[2], 10),
+                    date: parseInt(val[3], 10)
+                };
+                var time = {
+                    hour: parseInt(val[4], 10),
+                    minute: parseInt(val[5], 10),
+                    second: parseFloat(val[6], 10)
+                };
+                var joinDateArr = [], joinTimeArr = [];
+                for (var d in date)
+                    joinDateArr.push(date[d]);
+                for (var t in time)
+                    joinTimeArr.push(time[t]);
+
+                var mdtm = new Date(joinDateArr.join(" ") + " " + joinTimeArr.join(":") + " GMT");
+                callback(undefined, mdtm);
+            });
         });
     };
     this.restart = function(offset, callback) {
-        return (this.$state !== 'authorized' || !this.$feat['REST'] || !(/STREAM/i.test(this.$feat['REST'])))
+        return (this.$state !== "authorized" || !this.$feat["REST"] || !(/STREAM/i.test(this.$feat["REST"])))
             ? false
-            : this.send('REST', offset, callback);
+            : this.send("REST", offset, callback);
     };
     /** Internal helper methods */
     this.send = function(cmd, params, callback) {
@@ -649,156 +663,115 @@ Util.inherits(FTP, EventEmitter);
             return false;
 
         if (cmd) {
-            cmd = (''+cmd).toUpperCase();
-            if (typeof params === 'function') {
+            cmd = ("" + cmd).toUpperCase();
+            if (typeof params === "function") {
                 callback = params;
                 params = undefined;
             }
-            /*if (cmd === 'RNFR')
-                this.$lastCmd = cmd;
-            else
-                this.$lastCmd = null;
-            if (cmd === 'PASV')
-                return this.sendPasv(cmd, callback);*/
-            if (!params)
+            if (!params || params == FTP.EMPTY_PATH)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
         }
         
         if (this.$queue.length) { 
-            var fullcmd = this.$queue[0][0] + (this.$queue[0].length === 3 ? ' ' + this.$queue[0][1] : '');
+            var fullcmd = this.$queue[0][0] + (this.$queue[0].length === 3 ? " " + this.$queue[0][1] : "");
             if (debug)
-                debug('> ' + fullcmd);
-            this.emit('command', fullcmd);
+                debug("> " + fullcmd);
+            this.emit("command", fullcmd);
             // WRITE COMMAND AND ARGUMENTS TO THE SOCKET:
-            this.$socket.write(fullcmd + '\r\n');
+            this.$socket.write(fullcmd + "\r\n");
         }
 
         return true;
     };
-    /*this.sendPasv = function(cmd, callback) {
-        // Check if dataSocket is still on the line from a previous call.
-        if (this.$pasvRunning(cmd, callback))
-            return true;
-        
-        this.$pasvQueue.push([cmd, callback]);
-        if (debug)
-            debug('> ' + cmd);
-        this.emit('command', cmd);
-        // Ask the server to switch to PASV mode
-        this.$socket.write(cmd + '\r\n');
-
-        return true;
-    };*/
-    /*this.$pasvRunning = function() {
-        if (!this.$pasvQueue.length && this.$lastCmd !== 'RNFR')
-            return false;
-        
-        var args = Array.prototype.slice.call(arguments);
-        this.$pasvStack.push(args);
-        if (debug)
-            debug('(QUEUE) Stacking PASV ... ');
-        
-        return true;
-    };*/
+    
     this.$pasvGetLines = function(emitter, type, callback) {
-        return this.send('PASV', function(err, stream) {
+        return this.send("PASV", function(err, stream) {
             if (err)
                 return callback(err);
             else if (!emitter)
-                return emitter.emit('error', new Error('Connection severed'));
+                return emitter.emit("error", new Error("Connection severed"));
             else if (stream && !stream.readable)
-                return callback(err || new Error('Stream not readable'));
+                return callback(err || new Error("Stream not readable"));
             
-            var curData = '', lines;
-            stream.setEncoding('utf8');
-            // Note: stream will start transfering by cmd 'LIST'
-            stream.on('data', function(data) {
+            var curData = "", lines;
+            stream.setEncoding("utf8");
+            // Note: stream will start transfering by cmd "LIST"
+            stream.on("data", function(data) {
                 curData += data;
                 if (/\r\n|\n/.test(curData)) {
-                    if (curData[curData.length-1] === '\n') {
+                    if (curData[curData.length-1] === "\n") {
                         lines = curData.split(/\r\n|\n/);
-                        curData = '';
+                        curData = "";
                     } else {
-                        var pos = curData.lastIndexOf('\r\n');
+                        var pos = curData.lastIndexOf("\r\n");
                         if (pos === -1)
-                            pos = curData.lastIndexOf('\n');
+                            pos = curData.lastIndexOf("\n");
                         lines = curData.substring(0, pos).split(/\r\n|\n/);
                         curData = curData.substring(pos + 1);
                     }
                     for (var results = Parser.processDirLines(lines, type), i = 0; i < results.length; i++) {
                         if (debug)
-                            debug('(PASV) Got ' + type + ' line: ' + results[i][2]);
+                            debug("(PASV) Got " + type + " line: " + results[i][2]);
                         emitter.emit(results[i][0]/*event*/, results[i][1]/*result*/);
                     }
                 }
             });
-            stream.on('end', function() {
-                emitter.emit('end');
+            stream.on("end", function() {
+                emitter.emit("end");
             });
-            stream.on('error', function(err) {
-                emitter.emit('error', err);
+            stream.on("error", function(err) {
+                emitter.emit("error", err);
             });
             
             callback();
         });
     };
+    
     this.$pasvConnect = function() {
         if (!this.$pasvPort)
             return false;
 
-        var self = this;
+        var _self = this;
         var pasvTimeout = setTimeout(function() {
-            var result = self.send('ABOR', function(err) {
+            var result = _self.send("ABOR", function(err) {
                 if (err)
-                    return self.$executeNext(err);
-                self.$dataSock.destroy();
-                self.$dataSock = self.$pasvPort = self.$pasvIP = null;
-                self.$executeNext(new Error('(PASV) Data connection timed out while connecting'));
+                    return _self.$executeNext(err);
+                _self.$dataSock.destroy();
+                _self.$dataSock = _self.$pasvPort = _self.$pasvIP = null;
+                _self.$executeNext(new Error("(PASV) Data connection timed out while connecting"));
             });
             if (!result)
-                self.$executeNext(new Error('Connection severed'));
+                _self.$executeNext(new Error("Connection severed"));
         }, this.options.connTimeout);
 
-        if (debug)
-            debug('(PASV) About to attempt data connection to: ' + this.$pasvIP + ':' + this.$pasvPort);
+        if (debug) debug("(PASV) About to attempt data connection to: " + this.$pasvIP + ":" + this.$pasvPort);
         // Create new passive stream.
         this.$dataSock = Net.createConnection(this.$pasvPort, this.$pasvIP);
 
-        this.$dataSock.on('connect', function() {
+        this.$dataSock.on("connect", function() {
             clearTimeout(pasvTimeout);
-            if (debug)
-                debug('(PASV) Data connection successful');
-            //self.$executeNextPasv(self.$dataSock);
-            self.$executeNext(self.$dataSock);
+            if (debug) debug("(PASV) Data connection successful");
+            _self.$executeNext(_self.$dataSock);
         });
-        this.$dataSock.on('end', function() {
-            if (debug)
-                debug('(PASV) Data connection closed');
-            self.$dataSock = self.$pasvPort = self.$pasvIP = null;
+        this.$dataSock.on("end", function() {
+            if (debug) debug("(PASV) Data connection closed");
+            _self.$dataSock = _self.$pasvPort = _self.$pasvIP = null;
         });
-        this.$dataSock.on('close', function() {
+        this.$dataSock.on("close", function() {
             clearTimeout(pasvTimeout);
-            // Data connection closed, send next command in the queue.
-            /*if (self.$pasvStack.length) {
-                process.nextTick(function(){
-                    if (debug)
-                        debug('(SEND) Queued command: ' + self.$pasvStack[0][0]);
-                    self.send.apply(self, self.$pasvStack.shift());
-                });
-            }*/
         });
-        this.$dataSock.on('error', function(err) {
-            if (debug)
-                debug('(PASV) Error: ' + err);
+        this.$dataSock.on("error", function(err) {
+            if (debug) debug("(PASV) Error: " + err);
             
-            self.$executeNext(err);
-            self.$dataSock = self.$pasvPort = self.$pasvIP = null;
+            _self.$executeNext(err);
+            _self.$dataSock = _self.$pasvPort = _self.$pasvIP = null;
         });
 
         return true;
     };
+    
     this.$executeNext = function(result) {
         if (!this.$queue.length)
             return;
@@ -813,90 +786,29 @@ Util.inherits(FTP, EventEmitter);
             process.nextTick(function() {
                 callback(result);
             });
-        } else if (typeof result !== 'undefined') {
+        } else if (typeof result !== "undefined") {
             process.nextTick(function() {
                 callback(undefined, result);
             });
         } else
             process.nextTick(callback);
     };
-    /*this.$executeNextPasv = function(stream) {
-        if (stream !== this.$dataSock)
-            return;
-        
-        var p = this.$pasvQueue.shift();
-        var callback = p[1] || null;
-        if (!callback)
-            return;
-        
-        process.nextTick(function(){
-            callback(undefined, stream);
-        });
-    };*/
 }).call(FTP.prototype);
 
-/**
-* Adopted from jquery's extend method. Under the terms of MIT License.
-*
-* http://code.jquery.com/jquery-1.4.2.js
-*
-* Modified by Brian White to use Array.isArray instead of the custom isArray method
+/*
+* Recursively merge properties of two objects 
 */
-function extend() {
-    // copy reference to target object
-    var target = arguments[0] || {}, i = 1, length = arguments.length, deep = false, options, name, src, copy;
-    // Handle a deep copy situation
-    if (typeof target === "boolean") {
-        deep = target;
-        target = arguments[1] || {};
-        // skip the boolean and the target
-        i = 2;
+function $merge(destObj, fromObj) {
+    for (var p in fromObj) {
+        if (!destObj.hasOwnProperty(p))
+            destObj[p] = fromObj[p];
+        else if (obj2[p].constructor==Object)
+            destObj[p] = $merge(obj1[p], obj2[p]);
+        else
+            destObj[p] = fromObj[p];
     }
-    // Handle case when target is a string or something (possible in deep copy)
-    if (typeof target !== "object" && !typeof target === 'function')
-    target = {};
-    var isPlainObject = function(obj) {
-        // Must be an Object.
-        // Because of IE, we also have to check the presence of the constructor property.
-        // Make sure that DOM nodes and window objects don't pass through, as well
-        if (!obj || toString.call(obj) !== "[object Object]" || obj.nodeType || obj.setInterval)
-        return false;
-        var has_own_constructor = hasOwnProperty.call(obj, "constructor");
-        var has_is_property_of_method = hasOwnProperty.call(obj.constructor.prototype, "isPrototypeOf");
-        // Not own constructor property must be Object
-        if (obj.constructor && !has_own_constructor && !has_is_property_of_method)
-        return false;
-        // Own properties are enumerated firstly, so to speed up,
-        // if last one is own, then all properties are own.
-        var last_key;
-        for (key in obj)
-            last_key = key;
-        return typeof last_key === "undefined" || hasOwnProperty.call(obj, last_key);
-    };
-    for (; i < length; i++) {
-        // Only deal with non-null/undefined values
-        if ((options = arguments[i]) !== null) {
-            // Extend the base object
-            for (name in options) {
-                src = target[name];
-                copy = options[name];
-                // Prevent never-ending loop
-                if (target === copy)
-                continue;
-                // Recurse if we're merging object literal values or arrays
-                if (deep && copy && (isPlainObject(copy) || Array.isArray(copy))) {
-                    var clone = src && (isPlainObject(src) || Array.isArray(src)) ? src : Array.isArray(copy) ? [] : {};
-                    // Never move original objects, clone them
-                    target[name] = extend(deep, clone, copy);
-                    // Don't bring in undefined values
-                    } else if (typeof copy !== "undefined")
-                    target[name] = copy;
-                }
-            }
-        }
-        // Return the modified object
-        return target;
-    }
+    return destObj;
+}
 
 // Target API:
 //
