@@ -4,6 +4,15 @@ var Util = require("util"),
     Parser = require("./ftp_parser"),
     debug = function(){}
 
+/**
+ * FTP module that provides explicit methods to run commands and operations over FTP(S) protocol. It uses
+ * a control-oriented socket and another called data socket to handle data transfering.
+ * Data is tranfered by default using Binary (TYPE I) and default N not-print (not destined for printing),
+ * unless the server specifies otherwise by default.
+ *
+ * @param {Object} class options 
+ * @author Luis Merino
+ */
 var FTP = module.exports = function(options) {
     this.$socket = null;
     this.$dataSock = null;
@@ -22,11 +31,11 @@ var FTP = module.exports = function(options) {
         // to indicate use of passive mode
     };
     this.options = $merge(this.options, options);
-    // Set TimeZone hour difference to get the server's LIST offset.
+    // Set TimeZone hour difference to get the server's LIST offset
     FTP.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
     FTP.Cwd = this.options.cwd || "/";
-    
+    // Debug being a function will be executed frequently
     if (typeof this.options.debug === "function")
         debug = this.options.debug;
 };
@@ -34,6 +43,7 @@ var FTP = module.exports = function(options) {
 Util.inherits(FTP, EventEmitter);
 
 (function() {
+    
     this.EMPTY_PATH = "";
     
     function makeError(code, text) {
@@ -43,8 +53,15 @@ Util.inherits(FTP, EventEmitter);
         return err;
     }
     
-    // Many FTP implementations are not compatible with paths containing whitespaces,
-    // therefore we must CWD before commands.
+    /**
+     * Changes directory before running a command to facilitate the use of relative nodes path.
+     * Oftentimes FTP servers do not support commands, specially commands like LIST or MLSD
+     * with paths containing whitespaces.
+     *
+     * @param {String} this is the path to which CWD will be run on its direct parent DIR.
+     * @param {Function} callback for post-CWD
+     * @type {void}
+     */
     this.$changeToPath = function(path, next) {
         var parts = path.split("/");
         var node = parts.pop();
@@ -63,6 +80,9 @@ Util.inherits(FTP, EventEmitter);
         });
     }
     
+    /**
+     * Ends socket and data socket connections
+     */
     this.end = function() {
         if (this.$socket)
             this.$socket.end();
@@ -73,6 +93,16 @@ Util.inherits(FTP, EventEmitter);
         this.$dataSock = null;
     };
     
+    /**
+     * Initiates the connection of the control socket to the specified host and port. The socket data event handler
+     * will parse the responses and in most cases run the next command if success or execute the next with an error
+     * if this is the case. The responses are handled using the reply codes by 'Function Groups' as specified in
+     * RFC 959 <http://tools.ietf.org/html/rfc959#page-39>
+     *
+     * @param {String} this is the path to which CWD will be run on its direct parent DIR.
+     * @param {Function} callback for post-CWD
+     * @type {void}
+     */
     this.connect = function(port, host) {
         var _self = this, socket = this.$socket, curData = "";
         this.options.port = port = port || this.options.port;
@@ -141,7 +171,7 @@ Util.inherits(FTP, EventEmitter);
                 for (var i=0, code, text, group, len = resps.length; i < len; ++i) {
                     code = resps[i][0];
                     text = resps[i][1];
-                    group = Parser.getGroup(code); // second digit
+                    group = Parser.getGroup(code); /** second digit */
 
                     if (!_self.$state) {
                         if (code === 220) {
@@ -149,8 +179,8 @@ Util.inherits(FTP, EventEmitter);
                             _self.send("FEAT", function(err, text) {
                                 if (!err && /\r\n|\n/.test(text)) {
                                     var feats = text.split(/\r\n|\n/);
-                                    feats.shift(); // "Features:"
-                                    feats.pop(); // "End"
+                                    feats.shift(); /** "Features:" */
+                                    feats.pop(); /** "End" */
                                     for (var i=0, sp, len = feats.length; i < len; ++i) {
                                         feats[i] = feats[i].trim();
                                         if ((sp = feats[i].indexOf(" ")) > -1)
@@ -171,50 +201,50 @@ Util.inherits(FTP, EventEmitter);
                     
                     if (code >= 200 && !processNext) {
                         processNext = true;
-                        if (code >= 500)
+                        if (code >= 500) /** human errors first, like "bad sequence of commands" for example */
                             return _self.$executeNext(makeError(code, text));
                     }
                     else if (code < 200)
                         continue;
                     
                     switch(group) {
-                        case 0: // all in here are errors except 200
+                        case 0: /** all in here are errors except 200 */
                             if (code === 200)
                                 _self.$executeNext();
                             else
                                 _self.$executeNext(makeError(code, text));
                         break;
-                        case 1: // informational group
+                        case 1: /** informational group */
                             if (code >= 211 && code <= 215)
                                 _self.$executeNext(text);
                             else
                                 _self.$executeNext(makeError(code, text));
                         break;
-                        case 2: // control/data connection-related
+                        case 2: /** control/data connection-related */
                             if (code === 226) {
-                                // closing data connection, file action request successful
+                                /** closing data connection, file action request successful */
                                 _self.$executeNext();
                             } else if (code === 227) {
-                                // server entering passive mode
+                                /** server entering passive mode */
                                 var parsed = text.match(/([\d]+),([\d]+),([\d]+),([\d]+),([-\d]+),([-\d]+)/);
                                 if (!parsed)
                                     throw new Error("Could not parse passive mode response: " + text);
                                 _self.$pasvIP = parsed[1] + "." + parsed[2] + "." + parsed[3] + "." + parsed[4];
                                 _self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
-                                // call $executeNext after having dataSocket connected, then wait for response.
+                                /** call $executeNext after having dataSocket connected, then wait for response */
                                 return _self.$pasvConnect();
                             } else
                                 _self.$executeNext(makeError(code, text));
                         break;
-                        case 3: // authentication-related
+                        case 3: /** authentication-related */
                             if (code === 331 || code === 230)
                                 _self.$executeNext((code === 331));
                             else
                                 _self.$executeNext(makeError(code, text));
                             
                         break;
-                        /*case 4: // not used */
-                        case 5: // server file system state
+                        /*case 4: not used */
+                        case 5: /** server file system state */
                             if (code === 250 && _self.$queue.length && _self.$queue[0][0] === "MLST")
                                 _self.$executeNext(text);
                             else if (code === 250 || code === 350)
@@ -231,11 +261,21 @@ Util.inherits(FTP, EventEmitter);
                         break;
                     }
                 }
+                /** Run next command in the queue, if any ... */
                 if (processNext) _self.send();
             }
         });
     };
-    /** Standard features */
+    
+    /**
+     * This methods executes USER, PASS and TYPE as a sequence, then upgrades the state
+     * from 'connected' to 'authorized'. This state is used throughout the command methods.
+     *
+     * @param {String} user name
+     * @param {String} password
+     * @param {Function} callback
+     * @type {Boolean} true
+     */
     this.auth = function(user, password, callback) {
         if (this.$state !== "connected")
             return false;
@@ -269,17 +309,39 @@ Util.inherits(FTP, EventEmitter);
         next(null, true);
         return true;
     };
+    
+    /**
+     * Print the current working directory name.
+     *
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.pwd = function(callback) {
         return (this.$state !== "authorized")
             ? false
             : this.send("PWD", callback)
     };
+    
+    /**
+     * Makes the given directory be the current directory on the remote host.
+     *
+     * @param {String} path to which change
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.cwd = function(path, callback) {
         return (this.$state !== "authorized")
             ? false
             : this.send("CWD", path, callback);
     };
-    /** File functionality */
+    
+    /**
+     * Copy one file from the remote machine to the local machine.
+     *
+     * @param {String} path to which change
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.get = function(path, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -305,6 +367,16 @@ Util.inherits(FTP, EventEmitter);
             });
         });
     };
+    
+    /**
+     * Copy one file from the local machine to the remote machine.
+     *
+     * @param {Object} buffer containing the data to be sent
+     * @param {String} destination path
+     * @param {Function} callback
+     * @param {Boolean} execute append instead of put
+     * @type {Boolean}
+     */
     this.put = function(buffer, destpath, callback, append) {
         if (this.$state !== "authorized")
             return false;
@@ -327,16 +399,34 @@ Util.inherits(FTP, EventEmitter);
             });
         });
     };
+    
+    /**
+     * Append contents to the end of a specific file.
+     *
+     * @param {Object} buffer containing the data to be sent
+     * @param {String} destination path
+     * @param {Function} callback
+     */
     this.append = function(buffer, destpath, callback) {
         this.put.apply(this, ([].slice.call(arguments)).push(true));
     };
+    
+    /**
+     * Copy remote location to another remote location (not implemented).
+     */
     this.copy = function(origpath, destpath, callback) {
         if (this.$state !== "authorized")
             return false;
-        
-        callback();
         //@todo dir copy involves deep recursive copying
+        callback();
     };
+    
+    /**
+     * Delete (remove) a file in the current remote directory (same as rm in UNIX)
+     *
+     * @param {String} path of file
+     * @param {Function} callback
+     */
     this["delete"] = function(path, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -346,6 +436,14 @@ Util.inherits(FTP, EventEmitter);
             _self.send("DELE", node, callback);
         });
     };
+    
+    /**
+     * Rename a node; RNFR followed by an RNTO command to specify the new name.
+     *
+     * @param {String} path for RNFR
+     * @param {String} path to RNTO
+     * @param {Function} callback
+     */
     this.rename = function(pathFrom, pathTo, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -365,7 +463,13 @@ Util.inherits(FTP, EventEmitter);
             });
         });
     };
-    /** Directory functionality */
+    
+    /**
+     * Creates the named directory on the remote host.
+     *
+     * @param {String} path of new directory
+     * @param {Function} callback
+     */
     this.mkdir = function(path, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -375,6 +479,13 @@ Util.inherits(FTP, EventEmitter);
             _self.send("MKD", node, callback);
         });
     };
+    
+    /**
+     * Deletes the named directory on the remote host.
+     *
+     * @param {String} path of directory to delete
+     * @param {Function} callback
+     */
     this.rmdir = function(path, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -384,77 +495,13 @@ Util.inherits(FTP, EventEmitter);
             _self.send("RMD", node, callback);
         });
     };
-    /** Convenience methods */
-    var Stat = function(struct) {
-        this.uid    = struct.owner;
-        this.gid    = struct.group;
-        this.date   = struct.date;
-        this.time   = struct.time;
-        this.size   = struct.size;
-        this.name   = struct.name;
-        this.rights = struct.rights;
-
-        /** Not recommended, it usually will return the time according
-          * to the server's own Timezone shell settings */
-        this.getLastMod = function(type) {
-            var joinDateArr = [], joinTimeArr = [];
-            for (var d in struct.date)
-                joinDateArr.push(struct.date[d]);
-            for (var t in struct.time)
-                joinTimeArr.push(struct.time[t]);
-            
-            if (type === undefined || type === "LIST") {
-                var intHours = FTP.TZHourDiff < 0 ? FTP.TZHourDiff * -1 : FTP.TZHourDiff;
-                var hours = FTP.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
-                
-                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" GMT "+ hours);
-            }
-            else if (type === "MLSD")
-                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" UTC");
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isFile = function() {
-            return struct.type == "-";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isDirectory = function() {
-            return struct.type == "d";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isBlockDevice = function() {
-            return struct.type == "b";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isCharacterDevice = function() {
-            return struct.type == "c";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isSymbolicLink = function() {
-            return struct.type == "l";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isFIFO = function() {
-            return struct.type == "p";
-        };
-        /**
-        * @type {Boolean}
-        */
-        this.isSocket = function() {
-            return struct.type == "s";
-        };
-    };
+    
+    /**
+     * Forward method to read a directory listing and return an array of nodes.
+     *
+     * @param {String} path of directory
+     * @param {Function} callback
+     */
     this.readdir = function(path, callback) {
         if (debug) debug("READ DIR " + path);
         
@@ -479,6 +526,12 @@ Util.inherits(FTP, EventEmitter);
         });
     };
 
+    /**
+     * Gives the current stat of a node specified in path. Returns a single struct object.
+     *
+     * @param {String} path of node
+     * @param {Function} callback
+     */
     this.stat = this.lstat = this.fstat = function(path, callback) {
         var _self = this;
         this.$changeToPath(path, function(path, node) {
@@ -504,7 +557,16 @@ Util.inherits(FTP, EventEmitter);
             });
         });
     };
-    /** FTP true 'ls' command */
+    
+    /**
+     * Syntax: LIST [remote-filespec]
+     * If remote-filespec refers to a file, sends information about that file. If remote-filespec refers to a directory,
+     * sends information about each file in that directory. remote-filespec defaults to the current directory.
+     * This command must be preceded by a PORT or PASV command.
+     *
+     * @param {String} path of node
+     * @param {Function} callback
+     */
     this.list = function(path, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -585,17 +647,40 @@ Util.inherits(FTP, EventEmitter);
         //}
     };
     
+    /**
+     * EXTENDED FTP FEATURES: SYST, STAT, CHMOD, SIZE, MDTM
+     */
+     
+    /**
+     * Returns a word identifying the system, the word "Type:", and the default
+     * transfer type (as would be set by the TYPE command). For example: UNIX Type: L8
+     *
+     * @param {Function} callback
+     */
     this.system = function(callback) {
         return (this.$state !== "authorized")
             ? false
             : this.send("SYST", callback);
     };
+
+    /**
+     * Returns general status information about the FTP server process.
+     *
+     * @param {Function} callback
+     */
     this.status = function(callback) {
         return (this.$state !== "authorized")
             ? false
             : this.send("STAT", callback);
     };
-    /** Extended features */
+    
+    /**
+     * Changes file permissions to the specified mode as Octal, same as Unix.
+     *
+     * @param {String} path to which change permissions
+     * @param {Number} octal version of permissions, e.g. '755'
+     * @param {Function} callback
+     */
     this.chmod = function(path, mode, callback) {
         if (this.$state !== "authorized")
             return false;
@@ -605,6 +690,13 @@ Util.inherits(FTP, EventEmitter);
             _self.send("SITE CHMOD", [mode, node].join(" "), callback);
         });
     };
+    
+    /**
+     * Returns the file size in bytes.
+     *
+     * @param {String} path of file
+     * @param {Function} callback
+     */
     this.size = function(path, callback) {
         if (this.$state !== "authorized" || !this.$feat["SIZE"])
             return false;
@@ -615,8 +707,14 @@ Util.inherits(FTP, EventEmitter);
         });
     };
     
+    /**
+     * Returns the last modification from a unix timestamp to a date object
+     *
+     * @param {String} path of node
+     * @param {Function} callback
+     * @type {Date} object
+     */
     var reXTimeval = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d+)$/;
-    
     this.lastMod = function(path, callback) {
         if (this.$state !== "authorized" || !this.$feat["MDTM"])
             return false;
@@ -652,12 +750,31 @@ Util.inherits(FTP, EventEmitter);
             });
         });
     };
+    
+    /**
+     * Sets the point at which a file transfer should start; useful for resuming
+     * interrupted transfers. For nonstructured files, this is simply a decimal number.
+     * This command must immediately precede a data transfer command (RETR or STOR only);
+     * i.e. it must come after any PORT or PASV command.
+     *
+     * @param {Number} decimal number
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.restart = function(offset, callback) {
         return (this.$state !== "authorized" || !this.$feat["REST"] || !(/STREAM/i.test(this.$feat["REST"])))
             ? false
             : this.send("REST", offset, callback);
     };
-    /** Internal helper methods */
+    
+    /**
+     * Writes a command to control socket and adds it to the queue.
+     *
+     * @param {String} FTP command
+     * @param {String} parameters following the command
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.send = function(cmd, params, callback) {
         if (!this.$socket || !this.$socket.writable)
             return false;
@@ -686,6 +803,15 @@ Util.inherits(FTP, EventEmitter);
         return true;
     };
     
+    /**
+     * Sends a PASV command to initialize the data socket and prepare it
+     * for transfers from a LIST command.
+     *
+     * @param {Object} event emitter as delegation object
+     * @param {String} type of listing command used, usually LIST or MLSD
+     * @param {Function} callback
+     * @type {Boolean}
+     */
     this.$pasvGetLines = function(emitter, type, callback) {
         return this.send("PASV", function(err, stream) {
             if (err)
@@ -697,7 +823,7 @@ Util.inherits(FTP, EventEmitter);
             
             var curData = "", lines;
             stream.setEncoding("utf8");
-            // Note: stream will start transfering by cmd "LIST"
+            /** Note: stream will start transfering by cmd 'LIST' */
             stream.on("data", function(data) {
                 curData += data;
                 if (/\r\n|\n/.test(curData)) {
@@ -729,6 +855,12 @@ Util.inherits(FTP, EventEmitter);
         });
     };
     
+    /**
+     * Method called from the control-socket response handler. Server returned a 227 code
+     * in the reply, therefore server is ready to for the data socket to start transfering.
+     *
+     * @type {Boolean}
+     */
     this.$pasvConnect = function() {
         if (!this.$pasvPort)
             return false;
@@ -772,15 +904,21 @@ Util.inherits(FTP, EventEmitter);
         return true;
     };
     
+    /**
+     * Executes the next callback in the stack, usually triggered by server reply.
+     *
+     * @param {mixed} instance of Error if the reply so indicates it, or socket stream, or even text.
+     * @type {Boolean}
+     */
     this.$executeNext = function(result) {
         if (!this.$queue.length)
-            return;
+            return false;
 
         var p = this.$queue.shift();
         var callback = (p.length === 3 ? p[2] : p[1]);
         
         if (!callback)
-            return;
+            return false;
 
         if (result instanceof Error) {
             process.nextTick(function() {
@@ -793,11 +931,84 @@ Util.inherits(FTP, EventEmitter);
         } else
             process.nextTick(callback);
     };
+    
+    var Stat = function(struct) {
+        this.uid    = struct.owner;
+        this.gid    = struct.group;
+        this.date   = struct.date;
+        this.time   = struct.time;
+        this.size   = struct.size;
+        this.name   = struct.name;
+        this.rights = struct.rights;
+
+        /**
+         * Convenience method to return the lastmod date using the Timezone difference
+         * previously calculated using MDTM and LIST to approximate.
+         */
+        this.getLastMod = function(type) {
+            var joinDateArr = [], joinTimeArr = [];
+            for (var d in struct.date)
+                joinDateArr.push(struct.date[d]);
+            for (var t in struct.time)
+                joinTimeArr.push(struct.time[t]);
+            
+            if (type === undefined || type === "LIST") {
+                var intHours = FTP.TZHourDiff < 0 ? FTP.TZHourDiff * -1 : FTP.TZHourDiff;
+                var hours = FTP.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
+                
+                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" GMT "+ hours);
+            }
+            else if (type === "MLSD")
+                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" UTC");
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isFile = function() {
+            return struct.type == "-";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isDirectory = function() {
+            return struct.type == "d";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isBlockDevice = function() {
+            return struct.type == "b";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isCharacterDevice = function() {
+            return struct.type == "c";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isSymbolicLink = function() {
+            return struct.type == "l";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isFIFO = function() {
+            return struct.type == "p";
+        };
+        /**
+         * @type {Boolean}
+         */
+        this.isSocket = function() {
+            return struct.type == "s";
+        };
+    };
 }).call(FTP.prototype);
 
-/*
-* Recursively merge properties of two objects 
-*/
+/**
+ * Recursively merge properties of two objects 
+ */
 function $merge(destObj, fromObj) {
     for (var p in fromObj) {
         if (!destObj.hasOwnProperty(p))
