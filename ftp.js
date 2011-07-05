@@ -1,11 +1,28 @@
+/**
+ * FTP module that provides explicit methods to run commands and operations over
+ * FTP(S) protocol. It uses a control-oriented socket and another called data
+ * socket to handle data transfering.
+ * Data is transfered by default using Binary (TYPE I) and default N not-print
+ * (not destined for printing), unless the server specifies otherwise by default.
+ *
+ * Based on an implementation by Brian White <https://github.com/mscdex/node-ftp>
+ *
+ * @param {Object} class options
+ *
+ * @author Brian White <http://mscdex.net/>
+ * @contributor Luis Merino <luis AT ajax DOT org>
+ * @contributor Sergi Mansilla <sergi AT ajax DOT org>
+ */
+
 var _    = require("./support/underscore");
 var Util = require("util");
 var Net  = require("net");
 var EventEmitter = require("events").EventEmitter;
 var Parser = require("./ftp_parser");
-var debug  = function(){};
+var debug  = function() {};
 
 var RE_NEWLINE = /\r\n|\n/;
+
 /*
 var CB_METHODS = [
     "PWD",
@@ -22,15 +39,6 @@ var PATH_CB_METHODS = [
 ];
 */
 
-/**
- * FTP module that provides explicit methods to run commands and operations over FTP(S) protocol. It uses
- * a control-oriented socket and another called data socket to handle data transfering.
- * Data is tranfered by default using Binary (TYPE I) and default N not-print (not destined for printing),
- * unless the server specifies otherwise by default.
- *
- * @param {Object} class options
- * @author Luis Merino
- */
 var FTP = module.exports = function(options) {
     this.$socket    = null;
     this.$dataSock  = null;
@@ -71,11 +79,13 @@ Util.inherits(FTP, EventEmitter);
     }
 
     /**
-     * Changes directory before running a command to facilitate the use of relative nodes path.
-     * Often FTP servers do not support commands, specially commands like LIST or MLSD
-     * with paths containing whitespaces.
+     * Changes directory before running a command to facilitate the use of
+     * relative nodes path.
+     * Often FTP servers do not support commands, specially commands like LIST
+     * or MLSD with paths containing whitespaces.
      *
-     * @param {String} this is the path to which CWD will be run on its direct parent DIR.
+     * @param {String} this is the path to which CWD will be run on its direct
+     * parent DIR.
      * @param {Function} callback for post-CWD
      * @type {void}
      */
@@ -112,10 +122,11 @@ Util.inherits(FTP, EventEmitter);
     };
 
     /**
-     * Initiates the connection of the control socket to the specified host and port. The socket data event handler
-     * will parse the responses and in most cases run the next command if success or execute the next with an error
-     * if this is the case. The responses are handled using the reply codes by 'Function Groups' as specified in
-     * RFC 959 <http://tools.ietf.org/html/rfc959#page-39>
+     * Initiates the connection of the control socket to the specified host and
+     * port. The socket data event handler will parse the responses and in most
+     * cases run the next command if success or execute the next with an error
+     * if this is the case. The responses are handled using the reply codes by
+     * 'Function Groups' as specified in RFC 959 <http://tools.ietf.org/html/rfc959#page-39>
      *
      * @param {Number} connection port
      * @param {String} connection host name
