@@ -11,9 +11,9 @@ var Ftp = require("../ftp");
 var Fs = require("fs");
 
 var FTPCredentials = {
-    host: "ftp.merino.ws",
-    username: "lmerino",
-    passwd: "buscar123",
+    host: "",
+    username: "",
+    passwd: "",
     port: 21
 };
 
@@ -103,15 +103,14 @@ module.exports = {
             var newDir = self.$initial + "/" + "files";
             self.conn.cwd(newDir, function(err) {
                 assert.ok(!err);
-                var instream = new Buffer("sample data", "utf8");
-                self.conn.put(instream, destpath, function(err) {
+                self.conn.put(new Buffer("sample data"), destpath, function(err) {
                     assert.ok(!err);
                     self.conn.stat(destpath, function(err, stat) {
                         assert.ok(!err);
                         assert.equal(stat.name, destpath);
                         assert.ok(stat.isFile());
                         next();
-                    }, true);
+                    });
                 });
             });
         }
@@ -120,13 +119,12 @@ module.exports = {
     
     "test ftp upload binary file and its size": function(next) {
         var self = this,
-            localpath = "./fixtures/logo.png",
-            destpath = "logo.png";
+            localpath = "fixtures/logo.png",
+            destpath = this.$initial + "/files/logo.png";
         
         function afterConnect() {
             var newDir = self.$initial + "/" + "files";
-            var instream = Fs.readFile(localpath, "binary", afterReadFile);
-            function afterReadFile(err, data) {
+            Fs.readFile(localpath, "binary", function(err, data) {
                 assert.ok(!err);
                 self.conn.put(new Buffer(data, "binary"), destpath, function(err) {
                     assert.ok(!err);
@@ -136,7 +134,7 @@ module.exports = {
                         next();
                     });
                 });
-            }
+            });
         }
         this["test ftp auth"](afterConnect);
     },
@@ -183,22 +181,14 @@ module.exports = {
     
     "test ftp get file": function(next) {
         var self = this,
-            path = self.$initial + "/" + "files/logo.png",
-            localPath = "./fixtures/logo.png",
-            localPathNew = "./fixtures/downloaded_logo.png";
+            path = self.$initial + "/files/logo.png",
+            localPath = "fixtures/logo.png";
         
         function afterConnect() {
-            var outstream = Fs.createWriteStream(localPathNew);
-            self.conn.get(path, function(err, instream) {
+            self.conn.get(path, function(err, buffer) {
                 assert.ok(!err);
-                instream.on("error", function() {
-                    assert.fail();
-                });
-                instream.on("success", function() {
-                    assert.equal(Fs.statSync(localPath).size, Fs.statSync(localPath).size);
-                    next();
-                });
-                instream.pipe(outstream);
+                assert.equal(buffer.length, Fs.statSync(localPath).size);
+                next();
             });
         }
         this["test ftp auth"](afterConnect);

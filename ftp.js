@@ -30,7 +30,7 @@ var FTP = module.exports = function(options) {
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
     };
-    this.options = $merge(this.options, options);
+    this.options = Utils.merge(this.options, options);
     // Set TimeZone hour difference to get the server's LIST offset
     FTP.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
@@ -66,8 +66,11 @@ Util.inherits(FTP, EventEmitter);
         var parts = path.split("/");
         var node = parts.pop();
         path = parts.join("/").replace(/[\/]+$/, "");
+        
         if (path == FTP.Cwd)
             return next(FTP.Cwd, node);
+        if (path == this.EMPTY_PATH)
+            return next(path, node);
         
         if (path.charAt(0) != "/")
             path = "/" + path;
@@ -99,8 +102,8 @@ Util.inherits(FTP, EventEmitter);
      * if this is the case. The responses are handled using the reply codes by 'Function Groups' as specified in
      * RFC 959 <http://tools.ietf.org/html/rfc959#page-39>
      *
-     * @param {String} this is the path to which CWD will be run on its direct parent DIR.
-     * @param {Function} callback for post-CWD
+     * @param {Number} connection port
+     * @param {String} connection host name
      * @type {void}
      */
     this.connect = function(port, host) {
@@ -351,16 +354,17 @@ Util.inherits(FTP, EventEmitter);
             if (err)
                 return callback(err);
 
-            var buffer = [];
-            stream.on("data", function(chunk) {
-                buffer.push(chunk);
-            });
             _self.$changeToPath(path, function(path, node) {
+                var buffers = [];
+                stream.on("data", function(buffer) {
+                    buffers.push(buffer);
+                });
+                stream.on("end", function() {
+                    callback(undefined, Utils.concatBuffers(buffers));
+                });
                 var result = _self.send("RETR", node, function(err) {
                     if (err)
                         return callback(err);
-
-                    callback(undefined, new Buffer(buffer.join("")));
                 });
                 if (!result)
                     callback(new Error("Connection severed"));
@@ -408,7 +412,7 @@ Util.inherits(FTP, EventEmitter);
      * @param {Function} callback
      */
     this.append = function(buffer, destpath, callback) {
-        this.put.apply(this, ([].slice.call(arguments)).push(true));
+        this.put(buffer, destpath, callback, true);
     };
     
     /**
@@ -454,10 +458,7 @@ Util.inherits(FTP, EventEmitter);
                 if (err)
                     return callback(err);
                 
-                node = pathTo.split("/").pop().join("").replace(/[\/]+$/, "");
-                if (path.charAt(0) != "/")
-                    node = "/" + node;
-                
+                node = pathTo.split("/").pop().replace(/[\/]+$/, "");
                 if (!_self.send("RNTO", node, callback))
                     callback(new Error("Connection severed"));
             });
@@ -1006,71 +1007,107 @@ Util.inherits(FTP, EventEmitter);
     };
 }).call(FTP.prototype);
 
-/**
- * Recursively merge properties of two objects 
- */
-function $merge(destObj, fromObj) {
-    for (var p in fromObj) {
-        if (!destObj.hasOwnProperty(p))
-            destObj[p] = fromObj[p];
-        else if (obj2[p].constructor==Object)
-            destObj[p] = $merge(obj1[p], obj2[p]);
-        else
-            destObj[p] = fromObj[p];
+
+var Utils = {
+    /**
+     * Recursively merge properties of two objects 
+     */
+    merge: function(destObj, fromObj) {
+        for (var p in fromObj) {
+            if (!destObj.hasOwnProperty(p))
+                destObj[p] = fromObj[p];
+            else if (obj2[p].constructor==Object)
+                destObj[p] = Utils.merge(obj1[p], obj2[p]);
+            else
+                destObj[p] = fromObj[p];
+        }
+        return destObj;
+    },
+
+    /*
+     * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
+     * @author Mike de Boer <info AT mikedeboer DOT nl>
+     * @license http://github.com/mikedeboer/jsDAV/blob/master/LICENSE MIT License
+     */
+    concatBuffers: function(bufs) {
+        var buffer,
+            length = 0,
+            index  = 0;
+
+        if (!Array.isArray(bufs))
+            bufs = Array.prototype.slice.call(arguments);
+
+        for (var i = 0, l = bufs.length; i < l; ++i) {
+            buffer = bufs[i];
+            if (!Buffer.isBuffer(buffer))
+                buffer = bufs[i] = new Buffer(buffer);
+            length += buffer.length;
+        }
+        buffer = new Buffer(length);
+
+        bufs.forEach(function(buf, i) {
+            buf = bufs[i];
+            buf.copy(buffer, index, 0, buf.length);
+            index += buf.length;
+            delete bufs[i];
+        });
+
+        return buffer;
+    },
+
+    /*
+    Target API:
+    
+     var s = require('net').createStream(25, 'smtp.example.com');
+     s.on('connect', function() {
+      require('starttls')(s, options, function() {
+         if (!s.authorized) {
+           s.destroy();
+           return;
+         }
+    
+         s.end("hello world\n");
+       });
+     });
+     */
+    starttls: function(socket, options, cb) {
+        var sslcontext = require('crypto').createCredentials(options),
+        pair = require('tls').createSecurePair(sslcontext, false),
+        cleartext = $pipe(pair, socket);
+        pair.on('secure', function() {
+            var verifyError = pair._ssl.verifyError();
+            if (verifyError) {
+                cleartext.authorized = false;
+                cleartext.authorizationError = verifyError;
+                } else
+                cleartext.authorized = true;
+                if (cb)
+                cb();
+        });
+        cleartext._controlReleased = true;
+        return cleartext;
+    },
+
+    pipe: function(pair, socket) {
+        pair.encrypted.pipe(socket);
+        socket.pipe(pair.encrypted);
+
+        pair.fd = socket.fd;
+        var cleartext = pair.cleartext;
+        cleartext.socket = socket;
+        cleartext.encrypted = pair.encrypted;
+        cleartext.authorized = false;
+
+        function onerror(e) {
+            if (cleartext._controlReleased)
+            cleartext.emit('error', e);
+        }
+        function onclose() {
+            socket.removeListener('error', onerror);
+            socket.removeListener('close', onclose);
+        }
+        socket.on('error', onerror);
+        socket.on('close', onclose);
+        return cleartext;
     }
-    return destObj;
-}
-
-// Target API:
-//
-//  var s = require('net').createStream(25, 'smtp.example.com');
-//  s.on('connect', function() {
-//   require('starttls')(s, options, function() {
-//      if (!s.authorized) {
-//        s.destroy();
-//        return;
-//      }
-//
-//      s.end("hello world\n");
-//    });
-//  });
-function starttls(socket, options, cb) {
-    var sslcontext = require('crypto').createCredentials(options),
-    pair = require('tls').createSecurePair(sslcontext, false),
-    cleartext = $pipe(pair, socket);
-    pair.on('secure', function() {
-        var verifyError = pair._ssl.verifyError();
-        if (verifyError) {
-            cleartext.authorized = false;
-            cleartext.authorizationError = verifyError;
-            } else
-            cleartext.authorized = true;
-            if (cb)
-            cb();
-    });
-    cleartext._controlReleased = true;
-    return cleartext;
-}
-
-function $pipe(pair, socket) {
-    pair.encrypted.pipe(socket);
-    socket.pipe(pair.encrypted);
-
-    pair.fd = socket.fd;
-    var cleartext = pair.cleartext;
-    cleartext.socket = socket;
-    cleartext.encrypted = pair.encrypted;
-    cleartext.authorized = false;
-
-    function onerror(e) {
-        if (cleartext._controlReleased)
-        cleartext.emit('error', e);
-    }
-    function onclose() {
-        socket.removeListener('error', onerror);
-        socket.removeListener('close', onclose);
-    }
-    socket.on('error', onerror);
-    socket.on('close', onclose);
-    return cleartext;
-}
+};
