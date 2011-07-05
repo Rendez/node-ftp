@@ -45,7 +45,7 @@ exports.processDirLines = function(lines, type) {
             if (type === 'LIST')
                 result = parseList(lines[i]);
             else if (type === 'MLSD')
-                result = parseMList(lines[i], numFields);
+                result = parseMList(lines[i]);
 
             results.push([(typeof result === 'string' ? 'raw' : 'entry'), result, lines[i]]);
         }
