@@ -97,9 +97,7 @@ exports.parseResponses = function(lines) {
         throw new TypeError("The parameter should be an Array");
 
     var responses = [];
-
-    lines
-        .map(function(line) {
+    _.compact(lines).map(function(line) {
             var match = line.match(RE_SERVER_RESPONSE);
             match && (line = [parseInt(match[1], 10), match[2]]);
             return line;
@@ -135,7 +133,7 @@ exports.parseResponses = function(lines) {
                 }
                 return p;
             }
-            else if (c[1][0] == "-") {
+            else if (c[1].charAt(0) == "-") {
                 return c;
             }
             else {
@@ -150,12 +148,14 @@ exports.parseResponses = function(lines) {
 exports.processDirLines = function(lines, type) {
     var processed = [];
     var t;
-
     lines.forEach(function(line) {
         if (line.length) {
             if (type === 'LIST') {
-                var t = _.isString(entryParser(line)) ? 'raw' : 'entry';
-                result.push([t, result, line]);
+                var result = exports.entryParser(line);
+                if (result) {
+                    var t = _.isString(result) ? 'raw' : 'entry';
+                    processed.push([t, result, line]);
+                }
             }
             //else if (type === 'MLSD')
                 //result = parseMList(lines[i], numFields);
@@ -185,7 +185,7 @@ exports.entryParser = function(entry) {
         return parsers.msdos(entry);
 
     else {
-        console.log("Unrecognized format");
+        //console.log("Unrecognized format: \n" + entry);
         return null;
     }
 };
