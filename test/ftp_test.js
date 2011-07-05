@@ -222,20 +222,23 @@ module.exports = {
             });
         }
         function appendToFile(lastMod) {
-            var instream = Fs.createReadStream("./fixtures/lorem.md");
-            self.conn.append(instream, path, function(err) {
+            Fs.readFile("./fixtures/lorem.md", afterReadFile);
+            function afterReadFile(err, data) {
                 assert.ok(!err);
-                self.conn.stat(path, function(err, stat) {
+                self.conn.append(new Buffer(data), path, function(err) {
                     assert.ok(!err);
-                    assert.ok(stat.size > Fs.statSync("./fixtures/foo.txt").size); // foo.txt == original uploaded file
-                    self.conn.lastMod(path, function(err, timeObj) {
+                    self.conn.stat(path, function(err, stat) {
                         assert.ok(!err);
-                        assert.ok(timeObj.getDate());
-                        assert.ok(timeObj > lastMod); // modification date is higher than the one retrieved before append()
-                        next();
+                        assert.ok(stat.size > Fs.statSync("./fixtures/foo.txt").size); // foo.txt == original uploaded file
+                        self.conn.lastMod(path, function(err, timeObj) {
+                            assert.ok(!err);
+                            assert.ok(timeObj.getDate); // check if it's a date Object
+                            assert.ok(timeObj > lastMod); // modification date is higher than the one retrieved before append()
+                            next();
+                        });
                     });
                 });
-            });
+            }
         }
         this["test ftp auth"](afterConnect);
     },
