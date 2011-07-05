@@ -65,18 +65,24 @@ var RE_DOSEntry = new RegExp(
 
 var MONTHS = [null, "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-var FILE_TYPE           = 0;
-var DIRECTORY_TYPE      = 1;
-var SYMBOLIC_LINK_TYPE  = 2;
-var UNKNOWN_TYPE        = 3;
+exports.nodeTypes = {
+    FILE_TYPE           : 0,
+    DIRECTORY_TYPE      : 1,
+    SYMBOLIC_LINK_TYPE  : 2,
+    UNKNOWN_TYPE        : 3
+};
 
-var READ_PERMISSION     = 0;
-var WRITE_PERMISSION    = 1;
-var EXECUTE_PERMISSION  = 2;
+exports.permissions = {
+    READ_PERMISSION     : 0,
+    WRITE_PERMISSION    : 1,
+    EXECUTE_PERMISSION  : 2
+};
 
-var USER_ACCESS         = 0;
-var GROUP_ACCESS        = 1;
-var WORLD_ACCESS        = 2;
+exports.access = {
+    USER_ACCESS  : 0,
+    GROUP_ACCESS : 1,
+    WORLD_ACCESS : 2
+};
 
 /**
  * Parses standard FTP replies. Please note that this only involves replies in
@@ -212,20 +218,20 @@ var parsers = {
 
         switch (type[0]) {
             case 'd':
-                type = DIRECTORY_TYPE;
+                type = exports.nodeTypes.DIRECTORY_TYPE;
                 break;
             case 'l':
-                type = SYMBOLIC_LINK_TYPE;
+                type = exports.nodeTypes.SYMBOLIC_LINK_TYPE;
                 break;
             case 'b':
             case 'c':
                 // break; - fall through
             case 'f':
             case '-':
-                type = FILE_TYPE;
+                type = exports.nodeTypes.FILE_TYPE;
                 break;
             default:
-                type = UNKNOWN_TYPE;
+                type = exports.nodeTypes.UNKNOWN_TYPE;
         }
 
         var file = {
@@ -276,11 +282,11 @@ var parsers = {
                 return null;
 
             if (dirString === "<DIR>") {
-                type = DIRECTORY_TYPE;
+                type = exports.nodeTypes.DIRECTORY_TYPE;
                 size = 0;
             }
             else {
-                type = FILE_TYPE;
+                type = exports.nodeTypes.FILE_TYPE;
             }
 
             return {
