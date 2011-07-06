@@ -211,6 +211,9 @@ var parsers = {
             name   = name.substring(0, pos);
             target = name.substring(pos + 4);
         }
+        
+        if (name == "." || name == "..")
+            return null;
 
         switch (type[0]) {
             case 'd':
