@@ -146,17 +146,6 @@ exports.parseResponses = function(lines) {
 };
 
 exports.processDirLines = function(lines, type) {
-<<<<<<< HEAD
-    var results = [];
-    for (var i=0,result,len=lines.length; i<len; ++i) {
-        if (lines[i].length) {
-            if (type === 'LIST')
-                result = parseList(lines[i]);
-            else if (type === 'MLSD')
-                result = parseMList(lines[i]);
-            if (result)
-                results.push([(typeof result === 'string' ? 'raw' : 'entry'), result, lines[i]]);
-=======
     var processed = [];
     var t;
     lines.forEach(function(line) {
@@ -170,7 +159,6 @@ exports.processDirLines = function(lines, type) {
             }
             //else if (type === 'MLSD')
                 //result = parseMList(lines[i], numFields);
->>>>>>> origin/review
         }
     });
 
@@ -278,38 +266,8 @@ var parsers = {
         function replacer(str, hour, min, ampm, offset, s) {
             return hour + ":" + min + " " + ampm;
         }
-<<<<<<< HEAD
-        if (ret.type === 'l') {
-            var pos = ret.name.indexOf(' -> ');
-            info.name = ret.name.substring(0, pos);
-            info.target = ret.name.substring(pos+4);
-        } else
-            info.name = ret.name;
-        ret = info;
-        if (info.name == "." || info.name == "..")
-            ret = null;
-    } else if (ret = reXListMSDOS.exec(line)) {
-        info = {};
-        info.type = (ret.isdir ? 'd' : '-');
-        info.size = (ret.isdir ? '0' : ret.size);
-        info.date = {};
-        info.date.month = parseInt(ret.month, 10);
-        info.date.date = parseInt(ret.date, 10);
-        info.date.year = parseInt(ret.year, 10);
-        info.time = {};
-        info.time.hour = parseInt(ret.hour, 10);
-        info.time.minute = parseInt(ret.minute, 10);
-        if (ret.ampm[0].toLowerCase() === 'p' && info.time.hour < 12)
-            info.time.hour += 12;
-        else if (ret.ampm[0].toLowerCase() === 'a' && info.time.hour === 12)
-            info.time.hour = 0;
-        info.name = ret.name;
-        ret = info;
-    } else
-        ret = line; // could not parse, so at least give the end user a chance to look at the raw listing themselves
-=======
+        
         var time = group[2].replace(/(\d{2}):(\d{2})([AP]M)/, replacer);
->>>>>>> origin/review
 
         if (group) {
             var date = new Date(group[1] + " " + time).getTime();

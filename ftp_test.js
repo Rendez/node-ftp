@@ -12,10 +12,10 @@ var Fs = require("fs");
 var exec = require('child_process').spawn;
 
 var FTPCredentials = {
-    host: "",
-    username: "",
-    passwd: "",
-    port: 21
+    host: "localhost",
+    username: "luismerino",
+    passwd: "kaiku",
+    port: 2021
 };
 
 // Execution ORDER: test.setUpSuite, setUp, testFn, tearDown, test.tearDownSuite
@@ -304,4 +304,4 @@ process.on("exit", function() {
         module.exports.conn.end();
 });
 
-!module.parent && require("./support/async/lib/test").testcase(module.exports, "FTP"/*, timeout*/).exec();
+!module.parent && require("./../async.js/lib/test").testcase(module.exports, "FTP"/*, timeout*/).exec();

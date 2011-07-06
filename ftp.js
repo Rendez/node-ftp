@@ -1,26 +1,6 @@
 /**
-<<<<<<< HEAD
- * FTP module providing explicit methods for running and handling common commands using FTP(S) protocol.
- * This implementation counts on a control-oriented socket, plus one for data transfering which is
- * precedeed by a command PASV or PORT. Data transfering encoding and mode default to TYPE binary (I)
- * and not-print (N; not destined for printing, unless the server specifies otherwise in its default config).
- *
- * @param {Object} options, class options
- * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
- * @author Luis Merino <mail AT luismerino DOT name>
- */
-var Ftp = module.exports = function(options) {
-    this.$socket = null;
-    this.$dataSock = null;
-    this.$state = null;
-    this.$pasvPort = null;
-    this.$pasvIP = null;
-    this.$feat = null;
-    this.$queue = [];
-    this.options = {
-=======
- * FTP module that provides explicit methods to run commands and operations over
- * FTP(S) protocol. It uses a control-oriented socket and another called data
+ * Ftp module that provides explicit methods to run commands and operations over
+ * Ftp(S) protocol. It uses a control-oriented socket and another called data
  * socket to handle data transfering.
  * Data is transfered by default using Binary (TYPE I) and default N not-print
  * (not destined for printing), unless the server specifies otherwise by default.
@@ -33,7 +13,6 @@ var Ftp = module.exports = function(options) {
  * @contributor Luis Merino <luis AT ajax DOT org>
  * @contributor Sergi Mansilla <sergi AT ajax DOT org>
  */
-
 var _    = require("./support/underscore");
 var Util = require("util");
 var Net  = require("net");
@@ -42,24 +21,9 @@ var Parser = require("./ftp_parser");
 var debug  = function() {};
 
 var RE_NEWLINE = /\r\n|\n/;
+var EMPTY_PATH = "";
 
-/*
-var CB_METHODS = [
-    "PWD",
-    "CWD",
-    "SYST",
-    "STAT"
-];
-
-var PATH_CB_METHODS = [
-    "DELE",
-    "MKD",
-    "RMD",
-    "SIZE"
-];
-*/
-
-var FTP = module.exports = function(options) {
+var Ftp = module.exports = function(options) {
     this.$socket    = null;
     this.$dataSock  = null;
     this.$state     = null;
@@ -68,7 +32,6 @@ var FTP = module.exports = function(options) {
     this.$feat      = null;
     this.$queue     = [];
     this.options = _.extend({
->>>>>>> origin/review
         host: "localhost",
         port: 21,
         /*secure: false,*/
@@ -76,32 +39,19 @@ var FTP = module.exports = function(options) {
         debug: false/*,
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
-<<<<<<< HEAD
-    };
-    this.options = Utils.merge(this.options, options);
-    // Set TimeZone hour difference to get the server's LIST offset
+    }, options);
+    // Set TimeZone hour difference to get the server's LIST offset.
     Ftp.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
     Ftp.Cwd = "/";
-    // Debug being a function will be executed frequently
-    if (typeof this.options.debug === "function")
-=======
-    }, options);
-    // Set TimeZone hour difference to get the server's LIST offset.
-    FTP.TZHourDiff = this.options.TZHourDiff || 0;
-    // Current working directory
-    FTP.Cwd = this.options.cwd || "/";
 
     if (_.isFunction(this.options.debug))
->>>>>>> origin/review
         debug = this.options.debug;
 };
 
 Util.inherits(Ftp, EventEmitter);
 
 (function() {
-
-    this.EMPTY_PATH = "";
 
     function makeError(code, text) {
         var err = new Error("Server Error: " + code + (text ? " " + text : ""));
@@ -111,9 +61,8 @@ Util.inherits(Ftp, EventEmitter);
     }
 
     /**
-<<<<<<< HEAD
      * Changes directory before running a command to facilitate the use of relative nodes path.
-     * Some FTP servers lack support to run commands with paths containing whitespace(s) in them,
+     * Some Ftp servers lack support to run commands with paths containing whitespace(s) in them,
      * specially important in commands like LIST or MLSD.
      *
      * @param {String} path to parse in order to cwd to its parent dir
@@ -140,7 +89,7 @@ Util.inherits(Ftp, EventEmitter);
         
         if (path == Ftp.Cwd)
             return next(Ftp.Cwd, node);
-        if (path == this.EMPTY_PATH)
+        if (path == EMPTY_PATH)
             return next(path, node);
         
         this.cwd(path, function(err) {
@@ -150,65 +99,7 @@ Util.inherits(Ftp, EventEmitter);
             next(Ftp.Cwd = path, node);
         });
     };
-
-    /*this.$changeToPath = function(path, next, parent) {
-        if ((path = path.replace(/[\/]+$/, "")).charAt(0) != "/")
-            path = "/" + path;
-        
-        var parts = path.split("/");
-        var node = parts.pop();
-        console.log('parts', parts, 'original', arguments[0]);
-        if (arguments[0].split("/").length <= 2 && !nosplit) {
-            path = arguments[0];
-            node = "";
-        } else {
-            path = parts.join("/");
-            path.charAt(0) != "/" && (path = "/" + path);
-        }
-        console.log('path', path, 'node', node);
-        
-        if (path == Ftp.Cwd)
-            return next(Ftp.Cwd, node);
-        
-        this.cwd(path, function(err) {
-            if (err)
-                return next(err);
-            
-            next(Ftp.Cwd = path, node);
-        });
-    };*/
     
-=======
-     * Changes directory before running a command to facilitate the use of
-     * relative nodes path.
-     * Often FTP servers do not support commands, specially commands like LIST
-     * or MLSD with paths containing whitespaces.
-     *
-     * @param {String} this is the path to which CWD will be run on its direct
-     * parent DIR.
-     * @param {Function} callback for post-CWD
-     * @type {void}
-     */
-    this.$changeToPath = function(path, next) {
-        var parts = path.split("/");
-        var node  = parts.pop();
-        path = parts.join("/").replace(/\/+$/, "");
-
-        if (path === FTP.Cwd)
-            return next(FTP.Cwd, node);
-
-        if (path.charAt(0) != "/")
-            path = "/" + path;
-
-        this.cwd(path, function(err) {
-            if (err)
-                return next(err);
-
-            FTP.Cwd = path;
-            next(FTP.Cwd, node);
-        });
-    };
->>>>>>> origin/review
     /**
      * Ends socket and data socket connections
      */
@@ -753,14 +644,9 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.readdir = function(path, callback) {
         if (debug) debug("READ DIR " + path);
-<<<<<<< HEAD
-        
-=======
-
->>>>>>> origin/review
         var _self = this;
         this.$changeToPath(path, function(path, node) {
-            _self.list(Ftp.EMPTY_PATH, function(err, emitter) {
+            _self.list(EMPTY_PATH, function(err, emitter) {
                 if (err)
                     return callback(err);
 
@@ -790,7 +676,7 @@ Util.inherits(Ftp, EventEmitter);
     this.stat = this.lstat = this.fstat = function(path, callback) {
         var _self = this;
         this.$changeToPath(path, function(path, node) {
-            _self.list(Ftp.EMPTY_PATH, function(err, emitter) {
+            _self.list(EMPTY_PATH, function(err, emitter) {
                 if (err)
                     return callback(err);
 
@@ -913,7 +799,7 @@ Util.inherits(Ftp, EventEmitter);
     };
 
     /**
-     * EXTENDED FTP FEATURES: SYST, STAT, CHMOD, SIZE, MDTM
+     * EXTENDED Ftp FEATURES: SYST, STAT, CHMOD, SIZE, MDTM
      */
 
     /**
@@ -932,7 +818,7 @@ Util.inherits(Ftp, EventEmitter);
     };
 
     /**
-     * Returns general status information about the FTP server process.
+     * Returns general status information about the Ftp server process.
      *
      * @param {Function} callback
      */
@@ -986,9 +872,6 @@ Util.inherits(Ftp, EventEmitter);
     };
 
     /**
-<<<<<<< HEAD
-     * Returns the last modification from a Date string to a Date object
-=======
      * Returns the last modification in a GMT Date object
      *
      * About the MTMD time value:
@@ -1021,14 +904,13 @@ Util.inherits(Ftp, EventEmitter);
      * and time indicated at the location of the server-PI.
      *
      * The technical differences among GMT, TAI, UTC, UT1, UT2, etc., are
-     * not considered here.  A server-FTP process should always use the same
+     * not considered here.  A server-Ftp process should always use the same
      * time reference, so the times it returns will be consistent.  Clients
      * are not expected to be time synchronized with the server, so the
      * possible difference in times that might be reported by the different
      * time standards is not considered important.
      *
      * Any fractions of second re discarded in this implementation.
->>>>>>> origin/review
      *
      * @param {String} path of node
      * @param {Function} callback
@@ -1075,7 +957,7 @@ Util.inherits(Ftp, EventEmitter);
     /**
      * Writes a command to control socket and adds it to the queue.
      *
-     * @param {String} FTP command
+     * @param {String} Ftp command
      * @param {String} parameters following the command
      * @param {Function} callback
      * @type {Boolean}
@@ -1091,12 +973,8 @@ Util.inherits(Ftp, EventEmitter);
                 callback = params;
                 params = null;
             }
-<<<<<<< HEAD
-            if (!params || params == Ftp.EMPTY_PATH)
-=======
-
-            if (!params || params == FTP.EMPTY_PATH)
->>>>>>> origin/review
+            
+            if (!params || params == EMPTY_PATH)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
@@ -1129,18 +1007,11 @@ Util.inherits(Ftp, EventEmitter);
                 return callback(err);
             else if (!emitter)
                 return emitter.emit("error", new Error("Connection severed"));
-<<<<<<< HEAD
             else if (!stream || !stream.readable)
                 return callback(new Error("Stream not readable"));
-            
-            var curData = "", lines;
-=======
-            else if (stream && !stream.readable)
-                return callback(err || new Error("Stream not readable"));
 
             var curData = "";
             var lines;
->>>>>>> origin/review
             stream.setEncoding("utf8");
             // Note: stream will start transfering by cmd 'LIST'
             stream.on("data", function(data) {
@@ -1270,27 +1141,13 @@ Util.inherits(Ftp, EventEmitter);
          * previously calculated using MDTM and LIST to approximate.
          */
         this.getLastMod = function(type) {
-<<<<<<< HEAD
-            var joinDateArr = [], joinTimeArr = [];
-            for (var d in struct.date)
-                joinDateArr.push(struct.date[d]);
-            for (var t in struct.time)
-                joinTimeArr.push(struct.time[t]);
-            
-            if (type === undefined || type === "LIST") {
-                var intHours = Ftp.TZHourDiff < 0 ? Ftp.TZHourDiff * -1 : Ftp.TZHourDiff;
-                var hours = Ftp.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
-                
-                return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" GMT "+ hours);
-=======
             var gmtDate = new Date(struct.time);
 
             if (!type || type === "LIST") {
-                var sign  = FTP.TZHourDiff > 0 ? "-" : "+";
-                var hours = sign + "0" + Math.abs(FTP.TZHourDiff) + "00";
+                var sign  = Ftp.TZHourDiff > 0 ? "-" : "+";
+                var hours = sign + "0" + Math.abs(Ftp.TZHourDiff) + "00";
 
                 return new Date(gmtDate.toString() + " " + hours);
->>>>>>> origin/review
             }
             else if (type === "MLSD")
                 return new Date(time);
@@ -1328,29 +1185,6 @@ Util.inherits(Ftp, EventEmitter);
 }).call(Ftp.prototype);
 
 var Utils = {
-<<<<<<< HEAD
-    /**
-     * Recursively merge properties of two objects 
-     */
-    merge: function(destObj, fromObj) {
-        for (var p in fromObj) {
-            if (!destObj.hasOwnProperty(p))
-                destObj[p] = fromObj[p];
-            else if (fromObj[p].constructor==Object)
-                destObj[p] = Utils.merge(destObj[p], fromObj[p]);
-            else
-                destObj[p] = fromObj[p];
-        }
-        return destObj;
-    },
-
-    /*
-     * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
-     * @author Mike de Boer <info AT mikedeboer DOT nl>
-     * @license http://github.com/mikedeboer/jsDAV/blob/master/LICENSE MIT License
-     */
-=======
->>>>>>> origin/review
     concatBuffers: function(bufs) {
         var buffer;
         var length = 0;
