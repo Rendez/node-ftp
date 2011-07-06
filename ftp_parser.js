@@ -46,8 +46,8 @@ exports.processDirLines = function(lines, type) {
                 result = parseList(lines[i]);
             else if (type === 'MLSD')
                 result = parseMList(lines[i]);
-
-            results.push([(typeof result === 'string' ? 'raw' : 'entry'), result, lines[i]]);
+            if (result)
+                results.push([(typeof result === 'string' ? 'raw' : 'entry'), result, lines[i]]);
         }
     }
     return results;
@@ -106,6 +106,8 @@ function parseList(line) {
         } else
             info.name = ret.name;
         ret = info;
+        if (info.name == "." || info.name == "..")
+            ret = null;
     } else if (ret = reXListMSDOS.exec(line)) {
         info = {};
         info.type = (ret.isdir ? 'd' : '-');

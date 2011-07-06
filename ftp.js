@@ -5,15 +5,16 @@ var Util = require("util"),
     debug = function(){}
 
 /**
- * FTP module that provides explicit methods to run commands and operations over FTP(S) protocol. It uses
- * a control-oriented socket and another called data socket to handle data transfering.
- * Data is tranfered by default using Binary (TYPE I) and default N not-print (not destined for printing),
- * unless the server specifies otherwise by default.
+ * FTP module providing explicit methods for running and handling common commands using FTP(S) protocol.
+ * This implementation counts on a control-oriented socket, plus one for data transfering which is
+ * precedeed by a command PASV or PORT. Data transfering encoding and mode default to TYPE binary (I)
+ * and not-print (N; not destined for printing, unless the server specifies otherwise in its default config).
  *
- * @param {Object} class options 
- * @author Luis Merino
+ * @param {Object} options, class options
+ * @copyright Copyright(c) 2011 Ajax.org B.V. <info AT ajax DOT org>
+ * @author Luis Merino <mail AT luismerino DOT name>
  */
-var FTP = module.exports = function(options) {
+var Ftp = module.exports = function(options) {
     this.$socket = null;
     this.$dataSock = null;
     this.$state = null;
@@ -32,15 +33,15 @@ var FTP = module.exports = function(options) {
     };
     this.options = Utils.merge(this.options, options);
     // Set TimeZone hour difference to get the server's LIST offset
-    FTP.TZHourDiff = this.options.TZHourDiff || 0;
+    Ftp.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
-    FTP.Cwd = this.options.cwd || "/";
+    Ftp.Cwd = "/";
     // Debug being a function will be executed frequently
     if (typeof this.options.debug === "function")
         debug = this.options.debug;
 };
 
-Util.inherits(FTP, EventEmitter);
+Util.inherits(Ftp, EventEmitter);
 
 (function() {
     
@@ -55,33 +56,70 @@ Util.inherits(FTP, EventEmitter);
     
     /**
      * Changes directory before running a command to facilitate the use of relative nodes path.
-     * Oftentimes FTP servers do not support commands, specially commands like LIST or MLSD
-     * with paths containing whitespaces.
+     * Some FTP servers lack support to run commands with paths containing whitespace(s) in them,
+     * specially important in commands like LIST or MLSD.
      *
-     * @param {String} this is the path to which CWD will be run on its direct parent DIR.
-     * @param {Function} callback for post-CWD
+     * @param {String} path to parse in order to cwd to its parent dir
+     * @param {Function} callback for post-cwd
      * @type {void}
      */
-    this.$changeToPath = function(path, next) {
-        var parts = path.split("/");
-        var node = parts.pop();
-        path = parts.join("/").replace(/[\/]+$/, "");
+     this.$changeToPath = function(path, next, nosplit) {
+        if (path.charAt(0) == "/")
+            path = path.substring(1);
         
-        if (path == FTP.Cwd)
-            return next(FTP.Cwd, node);
+        var node = "";
+        if (!nosplit) {
+            var parts = path.replace(/[\/]*$/, "").split("/");
+            path = "/" + parts.join("/");
+            if (parts.length > 1) {
+                node = parts.pop();
+                path = "/" + parts.join("/");
+            } else {
+                node = parts.pop();
+                path = "/";
+            }
+        } else if (path.charAt(0) != "/")
+            path = "/" + path;
+        
+        if (path == Ftp.Cwd)
+            return next(Ftp.Cwd, node);
         if (path == this.EMPTY_PATH)
             return next(path, node);
-        
-        if (path.charAt(0) != "/")
-            path = "/" + path;
         
         this.cwd(path, function(err) {
             if (err)
                 return next(err);
             
-            next(FTP.Cwd = path, node);
+            next(Ftp.Cwd = path, node);
         });
-    }
+    };
+
+    /*this.$changeToPath = function(path, next, parent) {
+        if ((path = path.replace(/[\/]+$/, "")).charAt(0) != "/")
+            path = "/" + path;
+        
+        var parts = path.split("/");
+        var node = parts.pop();
+        console.log('parts', parts, 'original', arguments[0]);
+        if (arguments[0].split("/").length <= 2 && !nosplit) {
+            path = arguments[0];
+            node = "";
+        } else {
+            path = parts.join("/");
+            path.charAt(0) != "/" && (path = "/" + path);
+        }
+        console.log('path', path, 'node', node);
+        
+        if (path == Ftp.Cwd)
+            return next(Ftp.Cwd, node);
+        
+        this.cwd(path, function(err) {
+            if (err)
+                return next(err);
+            
+            next(Ftp.Cwd = path, node);
+        });
+    };*/
     
     /**
      * Ends socket and data socket connections
@@ -271,8 +309,8 @@ Util.inherits(FTP, EventEmitter);
     };
     
     /**
-     * This methods executes USER, PASS and TYPE as a sequence, then upgrades the state
-     * from 'connected' to 'authorized'. This state is used throughout the command methods.
+     * Authenticates by running USER, PASS and TYPE as a sequence, then upgrades the state
+     * from 'connected' to 'authorized'. This state is used throughout.
      *
      * @param {String} user name
      * @param {String} password
@@ -506,9 +544,9 @@ Util.inherits(FTP, EventEmitter);
     this.readdir = function(path, callback) {
         if (debug) debug("READ DIR " + path);
         
-        var _self = this;        
+        var _self = this;
         this.$changeToPath(path, function(path, node) {
-            _self.list(path, function(err, emitter) {
+            _self.list(Ftp.EMPTY_PATH, function(err, emitter) {
                 if (err)
                     return callback(err);
 
@@ -524,7 +562,7 @@ Util.inherits(FTP, EventEmitter);
                     callback(null, nodes);
                 });
             });
-        });
+        }, true);
     };
 
     /**
@@ -536,7 +574,7 @@ Util.inherits(FTP, EventEmitter);
     this.stat = this.lstat = this.fstat = function(path, callback) {
         var _self = this;
         this.$changeToPath(path, function(path, node) {
-            _self.list(FTP.EMPTY_PATH, function(err, emitter) {
+            _self.list(Ftp.EMPTY_PATH, function(err, emitter) {
                 if (err)
                     return callback(err);
                 
@@ -709,7 +747,7 @@ Util.inherits(FTP, EventEmitter);
     };
     
     /**
-     * Returns the last modification from a unix timestamp to a date object
+     * Returns the last modification from a Date string to a Date object
      *
      * @param {String} path of node
      * @param {Function} callback
@@ -786,7 +824,7 @@ Util.inherits(FTP, EventEmitter);
                 callback = params;
                 params = undefined;
             }
-            if (!params || params == FTP.EMPTY_PATH)
+            if (!params || params == Ftp.EMPTY_PATH)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
@@ -819,8 +857,8 @@ Util.inherits(FTP, EventEmitter);
                 return callback(err);
             else if (!emitter)
                 return emitter.emit("error", new Error("Connection severed"));
-            else if (stream && !stream.readable)
-                return callback(err || new Error("Stream not readable"));
+            else if (!stream || !stream.readable)
+                return callback(new Error("Stream not readable"));
             
             var curData = "", lines;
             stream.setEncoding("utf8");
@@ -954,8 +992,8 @@ Util.inherits(FTP, EventEmitter);
                 joinTimeArr.push(struct.time[t]);
             
             if (type === undefined || type === "LIST") {
-                var intHours = FTP.TZHourDiff < 0 ? FTP.TZHourDiff * -1 : FTP.TZHourDiff;
-                var hours = FTP.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
+                var intHours = Ftp.TZHourDiff < 0 ? Ftp.TZHourDiff * -1 : Ftp.TZHourDiff;
+                var hours = Ftp.TZHourDiff > 0 ? ("-0"+intHours+"00") : ("+0"+intHours+"00");
                 
                 return new Date(joinDateArr.join(" ") +" "+ joinTimeArr.join(":") +" GMT "+ hours);
             }
@@ -1005,7 +1043,7 @@ Util.inherits(FTP, EventEmitter);
             return struct.type == "s";
         };
     };
-}).call(FTP.prototype);
+}).call(Ftp.prototype);
 
 
 var Utils = {
@@ -1016,8 +1054,8 @@ var Utils = {
         for (var p in fromObj) {
             if (!destObj.hasOwnProperty(p))
                 destObj[p] = fromObj[p];
-            else if (obj2[p].constructor==Object)
-                destObj[p] = Utils.merge(obj1[p], obj2[p]);
+            else if (fromObj[p].constructor==Object)
+                destObj[p] = Utils.merge(destObj[p], fromObj[p]);
             else
                 destObj[p] = fromObj[p];
         }
