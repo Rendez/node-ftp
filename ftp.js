@@ -36,11 +36,13 @@ var Ftp = module.exports = function(options) {
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
     }, options);
-    // Set TimeZone hour difference to get the server's LIST offset.
-    Ftp.TZHourDiff = this.options.TZHourDiff || 0;
+    // Set TimeZone hour difference to get the server's LIST offset
+    this.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
-    Ftp.Cwd = "/";
-
+    this.currentCwd = "/";
+    // Idle timeout in seconds; defaults to 1 min
+    this.idleSeconds = 60;
+    
     if (_.isFunction(this.options.debug))
         debug = this.options.debug;
 };
@@ -57,6 +59,22 @@ Util.inherits(Ftp, EventEmitter);
         err.code = code;
         err.text = text;
         return err;
+    }
+    
+    function setupIdle() {
+        if (this.idleTimeout)
+            clearTimeout(this.idleTimeout);
+        
+        var _self = this;
+        this.idleTimeout = setTimeout(function() {
+            /** Idle time since last command */
+            _self.noop(function(err) {
+                if (err)
+                    return _self.emit("timeout");
+                
+                setupIdle.call(_self);
+            });
+        }, (this.idleSeconds - 15/*give a few extra secs*/) * 1000);
     }
 
     /**
@@ -87,14 +105,15 @@ Util.inherits(Ftp, EventEmitter);
         } else if (path.charAt(0) != "/")
             path = "/" + path;
         
-        if (path == Ftp.Cwd)
-            return next(Ftp.Cwd, node);
+        if (path == this.currentCwd)
+            return next(this.currentCwd, node);
         
+        _self = this;
         this.cwd(path, function(err) {
             if (err)
                 return next(err);
             
-            next(Ftp.Cwd = path, node);
+            next(_self.currentCwd = path, node);
         });
     };
     
@@ -220,8 +239,10 @@ Util.inherits(Ftp, EventEmitter);
 
                                     feats.map(function(feature) { return feature.toUpperCase(); })
                                          .forEach(function(feature) {
-                                             var sp = feature.indexOf(" ");
+                                             //var RE_FEAT = /^[\s]*(\w\d)+(?:[\s]*?())/;
+                                             //var match = RE_FEAT.exec(feature);
                                              feature = feature.trim();
+                                             var sp = feature.indexOf(" ");
 
                                              if (sp > -1)
                                                  _self.$feat[feature.substring(0, sp)] = feature.substring(sp + 1);
@@ -397,7 +418,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.pwd = function(callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             this.send("PWD", callback)
@@ -413,7 +434,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.cwd = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             this.send("CWD", path, callback);
@@ -429,7 +450,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.get = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -471,7 +492,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.put = function(buffer, destpath, callback, append) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             if (!Buffer.isBuffer(buffer))
@@ -511,7 +532,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.copy = function(origpath, destpath, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else
             //@todo dir copy involves deep recursive copying
@@ -527,7 +548,7 @@ Util.inherits(Ftp, EventEmitter);
 
     this["delete"] = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -546,7 +567,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.rename = function(pathFrom, pathTo, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -572,7 +593,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.mkdir = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -590,7 +611,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.rmdir = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -676,7 +697,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.list = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             if (_.isFunction(path)) {
@@ -763,7 +784,7 @@ Util.inherits(Ftp, EventEmitter);
     };
 
     /**
-     * EXTENDED Ftp FEATURES: SYST, STAT, CHMOD, SIZE, MDTM
+     * EXTENDED Ftp FEATURES: SYST, STAT, CHMOD, SIZE, MDTM, IDLE, NOOP
      */
 
     /**
@@ -774,7 +795,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.system = function(callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             this.send("SYST", callback);
@@ -788,7 +809,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.status = function(callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             this.send("STAT", callback);
@@ -804,7 +825,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.chmod = function(path, mode, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else {
             var _self = this;
@@ -822,10 +843,10 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.size = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"), null);
+            callback(new Error("Unauthorized"));
         }
         else if (!this.$feat["SIZE"]) {
-            callback(new Error("This server doesn't support the SIZE command"), null);
+            callback(new Error("This server doesn't support the SIZE command"));
         }
         else {
             var _self = this;
@@ -883,7 +904,7 @@ Util.inherits(Ftp, EventEmitter);
     var RE_MDTM_TIME = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:.\d+)?$/;
     this.lastMod = function(path, callback) {
         if (this.$state !== "authorized" || !this.$feat["MDTM"])
-            return false;
+            return callback(new Error("Not implemented"));
 
         var _self = this;
         this.$changeToPath(path, function(path, node) {
@@ -900,6 +921,34 @@ Util.inherits(Ftp, EventEmitter);
                     text.replace(RE_MDTM_TIME, "$1-$2-$3 $4:$5:$6 GMT")));
             });
         });
+    };
+    
+    this.idle = function(secs, callback) {
+        if (this.$state !== "authorized" || !this.$feat["IDLE"])
+            return callback(new Error("Not implemented"));
+        
+        secs = secs || this.idleSeconds;
+        var _self = this;
+        this.send("SITE IDLE", secs, function(err) {
+            if (!err) _self.idleSeconds = secs;
+            callback(err, _self.idleSeconds);
+        });
+    };
+    
+    /**
+     * Does nothing except return a response. Used to keep connection alive and avoid innactivity timeout.
+     * Sidenotes:
+     * Only successful transfer commands (APPE, STOR, RETR, Lists), NOOP command (if option is enabled) and successful delete,
+     * rename commands reset the client idle time. Other commands are often ignored.
+     * However, when using NOOP the server in theory should not close the control socket, but keep it alive.
+     * Some server do not implement NOOP correctly, and they close the control socket, therefore we must use LIST :/
+     */
+    this.noop = function(callback) {
+        if (this.$state !== "authorized"/* || !this.$feat["NOOP"]*/)
+            return callback(new Error("Not authorized"));
+        
+        //this.send("NOOP", callback);
+        this.list("/", callback);
     };
 
     /**
@@ -951,8 +1000,9 @@ Util.inherits(Ftp, EventEmitter);
             this.emit("command", fullcmd);
             // WRITE COMMAND AND ARGUMENTS TO THE SOCKET:
             this.$socket.write(fullcmd + "\r\n");
+            setupIdle.call(this);
         }
-
+        
         return true;
     };
 
@@ -1108,8 +1158,8 @@ Util.inherits(Ftp, EventEmitter);
             var gmtDate = new Date(struct.time);
 
             if (!type || type === "LIST") {
-                var sign  = Ftp.TZHourDiff > 0 ? "-" : "+";
-                var hours = sign + "0" + Math.abs(Ftp.TZHourDiff) + "00";
+                var sign  = this.TZHourDiff > 0 ? "-" : "+";
+                var hours = sign + "0" + Math.abs(this.TZHourDiff) + "00";
 
                 return new Date(gmtDate.toString() + " " + hours);
             }
