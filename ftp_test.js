@@ -12,9 +12,9 @@ var Fs = require("fs");
 var exec = require('child_process').spawn;
 
 var FTPCredentials = {
-    host: "localhost",
-    username: "luismerino",
-    passwd: "kaiku",
+    host: "",
+    username: "",
+    passwd: "",
     port: 2021
 };
 

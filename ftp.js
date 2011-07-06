@@ -1,9 +1,8 @@
 /**
- * Ftp module that provides explicit methods to run commands and operations over
- * Ftp(S) protocol. It uses a control-oriented socket and another called data
- * socket to handle data transfering.
- * Data is transfered by default using Binary (TYPE I) and default N not-print
- * (not destined for printing), unless the server specifies otherwise by default.
+ * FTP module providing explicit methods for running and handling common commands using FTP(S) protocol.
+ * This implementation counts on a control-oriented socket, plus one for data transfering which is
+ * precedeed by a command PASV or PORT. Data transfering encoding and mode default to TYPE binary (I)
+ * and not-print (N; not destined for printing, unless the server specifies otherwise in its default config).
  *
  * Based on an implementation by Brian White <https://github.com/mscdex/node-ftp>
  *
@@ -19,9 +18,6 @@ var Net  = require("net");
 var EventEmitter = require("events").EventEmitter;
 var Parser = require("./ftp_parser");
 var debug  = function() {};
-
-var RE_NEWLINE = /\r\n|\n/;
-var EMPTY_PATH = "";
 
 var Ftp = module.exports = function(options) {
     this.$socket    = null;
@@ -52,7 +48,10 @@ var Ftp = module.exports = function(options) {
 Util.inherits(Ftp, EventEmitter);
 
 (function() {
-
+    
+    var RE_NEWLINE = /\r\n|\n/;
+    var EMPTY_PATH = "";
+    
     function makeError(code, text) {
         var err = new Error("Server Error: " + code + (text ? " " + text : ""));
         err.code = code;
@@ -67,6 +66,7 @@ Util.inherits(Ftp, EventEmitter);
      *
      * @param {String} path to parse in order to cwd to its parent dir
      * @param {Function} callback for post-cwd
+     * @param {Boolean} whether to split the last node from the path or not
      * @type {void}
      */
      this.$changeToPath = function(path, next, nosplit) {
@@ -89,8 +89,6 @@ Util.inherits(Ftp, EventEmitter);
         
         if (path == Ftp.Cwd)
             return next(Ftp.Cwd, node);
-        if (path == EMPTY_PATH)
-            return next(path, node);
         
         this.cwd(path, function(err) {
             if (err)
@@ -291,8 +289,7 @@ Util.inherits(Ftp, EventEmitter);
                                 _self.$executeNext(makeError(code, text));
                             break;
                         case 2:
-                            if (code === 226) {
-                                /** closing data connection, file action request successful */
+                            if (code === 226) { /** closing data connection, file action request successful */
                                 _self.$executeNext();
                             }
                             else if (code === 227) {
@@ -419,7 +416,6 @@ Util.inherits(Ftp, EventEmitter);
             callback(new Error("Unauthorized"), null);
         }
         else {
-            console.log(path)
             this.send("CWD", path, callback);
         }
     };
@@ -521,38 +517,6 @@ Util.inherits(Ftp, EventEmitter);
             //@todo dir copy involves deep recursive copying
             callback();
     };
-
-    /*
-    this.createAuthorizedCmd = function(cmd) {
-        var _self  = this;
-        return (function() {
-            var _self = this;
-            if (this.$state !== "authorized") {
-                callback(new Error("Unauthorized"), null);
-            }
-            else if (!this.$feat[cmd]) {
-                callback(new Error("This server doesn't support the SIZE command"), null);
-            }
-
-            if (_.include(CB_METHODS, cmd)) {
-                // Assuming a 'callback only' type of method
-                var callback = arguments[0];
-                this.send(cmd, callback)
-            }
-            else if (_.include(PATH_CB_METHODS, cmd)) {
-                // Assuming a 'path, callback type of method
-                var path = arguments[0];
-                var callback = arguments[1];
-                this.$changeToPath(path, function(path, node) {
-                    _self.send(cmd, node, callback);
-                });
-            }
-            else {
-                throw new Error("There is no shortcut for command " + cmd);
-            }
-        }).call(_self);
-    },
-    */
 
     /**
      * Delete (remove) a file in the current remote directory (same as rm in UNIX)
