@@ -380,6 +380,8 @@ Util.inherits(Ftp, EventEmitter);
     this.auth = function(user, password, callback) {
         if (this.$state !== "connected")
             return callback(new Error("Not connected"));
+        else if (this.$state === "authorized")
+            return callback();
 
         if (_.isFunction(user)) {
             callback = user;
