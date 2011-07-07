@@ -74,7 +74,7 @@ Util.inherits(Ftp, EventEmitter);
                 
                 setupIdle.call(_self);
             });
-        }, (this.idleSeconds - 15/*give a few extra secs*/) * 1000);
+        }, (this.idleSeconds - 10/*give a few extra secs*/) * 1000);
     }
 
     /**

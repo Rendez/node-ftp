@@ -1,5 +1,4 @@
- - Periodic NOOP sending
- - More compatible LIST parsing?
- - Add support for some SITE commands such as CHMOD, CHGRP, and QUOTA
+ - Finish compatible implementation of MDLT parsing
+ - Add support for some more SITE commands such as CHGRP and QUOTA
  - Try server IP if server gives a LAN IP when attempting passive data connection
  - Active (non-passive) data connections
