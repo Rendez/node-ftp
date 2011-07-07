@@ -36,7 +36,7 @@ var Ftp = module.exports = function(options) {
         active: false*/ // if numerical, is the port number, otherwise should be false
         // to indicate use of passive mode
     }, options);
-    // Set TimeZone hour difference to get the server's LIST offset
+    // Set TimeZone hour difference to get the server's LIST time offset
     this.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
     this.currentCwd = "/";
@@ -45,7 +45,11 @@ var Ftp = module.exports = function(options) {
     
     if (_.isFunction(this.options.debug))
         debug = this.options.debug;
+    else if (Ftp.debugMode)
+        debug = function(text){ console.info(text); };
 };
+
+Ftp.debugMode = false;
 
 Util.inherits(Ftp, EventEmitter);
 
@@ -375,7 +379,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.auth = function(user, password, callback) {
         if (this.$state !== "connected")
-            return false;
+            return callback(new Error("Not connected"));
 
         if (_.isFunction(user)) {
             callback = user;
@@ -937,17 +941,17 @@ Util.inherits(Ftp, EventEmitter);
     
     /**
      * Does nothing except return a response. Used to keep connection alive and avoid innactivity timeout.
-     * Sidenotes:
+     * -- Sidenotes:
      * Only successful transfer commands (APPE, STOR, RETR, Lists), NOOP command (if option is enabled) and successful delete,
      * rename commands reset the client idle time. Other commands are often ignored.
-     * However, when using NOOP the server in theory should not close the control socket, but keep it alive.
-     * Some server do not implement NOOP correctly, and they close the control socket, therefore we must use LIST :/
+     * However, when using NOOP the server in theory should not close the control socket, but rather keep it alive...
+     * This is not true, as some servers treat NOOP incorrectly, therefore closing the 'control' socket. By this token, we are using LIST.
      */
     this.noop = function(callback) {
         if (this.$state !== "authorized"/* || !this.$feat["NOOP"]*/)
             return callback(new Error("Not authorized"));
         
-        //this.send("NOOP", callback);
+        /*this.send("NOOP", callback);*/
         this.list("/", callback);
     };
 
@@ -995,11 +999,11 @@ Util.inherits(Ftp, EventEmitter);
 
         if (this.$queue.length) {
             var fullcmd = this.$queue[0][0] + (this.$queue[0].length === 3 ? " " + this.$queue[0][1] : "");
-            if (debug)
-                debug("> " + fullcmd);
+            if (debug) debug("> " + fullcmd);
+            
             this.emit("command", fullcmd);
-            // WRITE COMMAND AND ARGUMENTS TO THE SOCKET:
             this.$socket.write(fullcmd + "\r\n");
+            
             setupIdle.call(this);
         }
         
