@@ -17,7 +17,6 @@ var Util = require("util");
 var Net  = require("net");
 var EventEmitter = require("events").EventEmitter;
 var Parser = require("./ftp_parser");
-var debug  = function() {};
 
 var Ftp = module.exports = function(options) {
     this.$socket    = null;
@@ -39,7 +38,7 @@ var Ftp = module.exports = function(options) {
     // Set TimeZone hour difference to get the server's LIST time offset
     this.TZHourDiff = this.options.TZHourDiff || 0;
     // Current working directory
-    this.currentCwd = "/";
+    this.currentCwd = "";
     // Idle timeout in seconds; defaults to 1 min
     this.idleSeconds = 60;
     
@@ -47,9 +46,11 @@ var Ftp = module.exports = function(options) {
         debug = this.options.debug;
     else if (Ftp.debugMode)
         debug = function(text){ console.info(text); };
+    else
+        debug = function(){}
 };
 
-Ftp.debugMode = false;
+Ftp.debugMode = true;
 
 Util.inherits(Ftp, EventEmitter);
 
@@ -65,7 +66,7 @@ Util.inherits(Ftp, EventEmitter);
         return err;
     }
     
-    function setupIdle() {
+    function persistConnection() {
         if (this.idleTimeout)
             clearTimeout(this.idleTimeout);
         
@@ -76,7 +77,7 @@ Util.inherits(Ftp, EventEmitter);
                 if (err)
                     return _self.emit("timeout");
                 
-                setupIdle.call(_self);
+                persistConnection.call(_self);
             });
         }, (this.idleSeconds - 10/*give a few extra secs*/) * 1000);
     }
@@ -85,6 +86,7 @@ Util.inherits(Ftp, EventEmitter);
      * Changes directory before running a command to facilitate the use of relative nodes path.
      * Some Ftp servers lack support to run commands with paths containing whitespace(s) in them,
      * specially important in commands like LIST or MLSD.
+     * Returns to the callback the dir path executed on cwd, and the splitted node (last chunk).
      *
      * @param {String} path to parse in order to cwd to its parent dir
      * @param {Function} callback for post-cwd
@@ -98,13 +100,12 @@ Util.inherits(Ftp, EventEmitter);
         var node = "";
         if (!nosplit) {
             var parts = path.replace(/[\/]*$/, "").split("/");
-            path = "/" + parts.join("/");
             if (parts.length > 1) {
                 node = parts.pop();
                 path = "/" + parts.join("/");
             } else {
-                node = parts.pop();
                 path = "/";
+                node = parts.pop();
             }
         } else if (path.charAt(0) != "/")
             path = "/" + path;
@@ -123,6 +124,7 @@ Util.inherits(Ftp, EventEmitter);
     
     /**
      * Ends socket and data socket connections
+     * @type {void}
      */
     this.end = function() {
         if (this.$socket)
@@ -137,8 +139,8 @@ Util.inherits(Ftp, EventEmitter);
     /**
      * Initiates the connection of the control socket to the specified host and
      * port. The socket data event handler will parse the responses and in most
-     * cases run the next command if success or execute the next with an error
-     * if this is the case. The responses are handled using the reply codes by
+     * cases run the next command if successful or execute the next with an error
+     * if that is the case. The responses are handled using the reply codes by
      * 'Function Groups' as specified in RFC 959 <http://tools.ietf.org/html/rfc959#page-39>
      *
      * @param {Number} connection port
@@ -380,8 +382,6 @@ Util.inherits(Ftp, EventEmitter);
     this.auth = function(user, password, callback) {
         if (this.$state !== "connected")
             return callback(new Error("Not connected"));
-        else if (this.$state === "authorized")
-            return callback();
 
         if (_.isFunction(user)) {
             callback = user;
@@ -567,8 +567,8 @@ Util.inherits(Ftp, EventEmitter);
     /**
      * Rename a node; RNFR followed by an RNTO command to specify the new name.
      *
-     * @param {String} path for RNFR
-     * @param {String} path to RNTO
+     * @param {String} path for, RNFR
+     * @param {String} path to, RNTO
      * @param {Function} callback
      */
     this.rename = function(pathFrom, pathTo, callback) {
@@ -577,17 +577,15 @@ Util.inherits(Ftp, EventEmitter);
         }
         else {
             var _self = this;
-            var ret;
-            this.$changeToPath(pathFrom, function(path, node) {
-                _self.send("RNFR", node, function(err) {
+            if (!_self.send("RNFR", pathFrom, function(err) {
                     if (err)
-                        return callback(err);
-
-                    node = pathTo.split("/").pop().replace(/\/+$/, "");
-                    if (!_self.send("RNTO", node, callback))
+                        return callback(err)
+           
+                    if (!_self.send("RNTO", pathTo, callback))
                         callback(new Error("Connection severed"));
-                });
-            });
+                })
+            )
+                callback(new Error("Connection severed"));
         }
     };
 
@@ -667,6 +665,12 @@ Util.inherits(Ftp, EventEmitter);
     this.stat = this.lstat = this.fstat = function(path, callback) {
         var _self = this;
         this.$changeToPath(path, function(path, node) {
+            /*_self.send("STAT", node, function(err, stat) {
+                if (err)
+                    return callback(err);
+                console.log("STAT..................", arguments);
+                callback(null, stat);
+            });*/
             _self.list(EMPTY_PATH, function(err, emitter) {
                 if (err)
                     return callback(err);
@@ -685,7 +689,7 @@ Util.inherits(Ftp, EventEmitter);
 
                 emitter.on("success", function() {
                     if (list.length === 0)
-                        return callback("File at location " + path + "/" + node + " not found");
+                        return callback("File " + node + " at location " + path + " not found");
                     callback(null, list[0]);
                 });
             });
@@ -823,7 +827,7 @@ Util.inherits(Ftp, EventEmitter);
     };
 
     /**
-     * Changes file permissions to the specified mode as Octal, same as Unix.
+     * Changes file permissions to the specified mode using an octal value, same as Unix.
      *
      * @param {String} path to which change permissions
      * @param {Number} octal version of permissions, e.g. '755'
@@ -876,7 +880,7 @@ Util.inherits(Ftp, EventEmitter);
      * 01--31, two digits giving the hour of the day, with a range of
      * 00--23, two digits giving minutes past the hour, with a range of
      * 00--59, and finally, two digits giving seconds past the minute, with
-     * a range of 00--60 (with 60 being used only at a leap second).  Years
+     * a range of 00--60 (with 60 being used only at a leap second). Years
      * in the tenth century, and earlier, cannot be expressed.  This is not
      * considered a serious defect of the protocol.
      *
@@ -942,19 +946,21 @@ Util.inherits(Ftp, EventEmitter);
     };
     
     /**
-     * Does nothing except return a response. Used to keep connection alive and avoid innactivity timeout.
+     * Does nothing except return an unused response. This serves to keep a connection alive and avoid the innactivity timeout.
      * -- Sidenotes:
-     * Only successful transfer commands (APPE, STOR, RETR, Lists), NOOP command (if option is enabled) and successful delete,
-     * rename commands reset the client idle time. Other commands are often ignored.
-     * However, when using NOOP the server in theory should not close the control socket, but rather keep it alive...
-     * This is not true, as some servers treat NOOP incorrectly, therefore closing the 'control' socket. By this token, we are using LIST.
+     * Keeping a connection alive can be done thru successful transfer commands (APPE, STOR, RETR, Lists),
+     * NOOP command (if option is enabled) and successful delete, rename commands reset the client idle time.
+     * Other commands are often ignored.
+     * However, when using NOOP, the server in theory should not close the control socket, but rather keep it alive...
+     * Unfortunately, this is not the case as some servers treat NOOP incorrectly, therefore closing the 'control' socket.
+     * For this reaason, LIST is being used.
      */
     this.noop = function(callback) {
         if (this.$state !== "authorized"/* || !this.$feat["NOOP"]*/)
             return callback(new Error("Not authorized"));
         
         /*this.send("NOOP", callback);*/
-        this.list("/", callback);
+        this.list("", callback);
     };
 
     /**
@@ -1006,7 +1012,7 @@ Util.inherits(Ftp, EventEmitter);
             this.emit("command", fullcmd);
             this.$socket.write(fullcmd + "\r\n");
             
-            setupIdle.call(this);
+            persistConnection.call(this);
         }
         
         return true;
