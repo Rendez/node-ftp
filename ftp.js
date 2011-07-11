@@ -50,7 +50,7 @@ var Ftp = module.exports = function(options) {
         debug = function(){}
 };
 
-Ftp.debugMode = true;
+Ftp.debugMode = false;
 
 Util.inherits(Ftp, EventEmitter);
 
@@ -238,15 +238,13 @@ Util.inherits(Ftp, EventEmitter);
                             _self.$state = "connected";
                             _self.send("FEAT", function(err, text) {
                                 if (!err && RE_NEWLINE.test(text)) {
-                                    // Strip "Features:" and "End"
+                                    /** Strip "Features:" and "End" */
                                     var feats = text.split(RE_NEWLINE);
                                     feats.shift();
                                     feats.pop();
 
                                     feats.map(function(feature) { return feature.toUpperCase(); })
                                          .forEach(function(feature) {
-                                             //var RE_FEAT = /^[\s]*(\w\d)+(?:[\s]*?())/;
-                                             //var match = RE_FEAT.exec(feature);
                                              feature = feature.trim();
                                              var sp = feature.indexOf(" ");
 
@@ -255,9 +253,8 @@ Util.inherits(Ftp, EventEmitter);
                                              else
                                                  _self.$feat[feature] = true;
                                         });
-
+                                    
                                     debug && debug("Features: " + Util.inspect(_self.$feat));
-
                                     _self.emit("feat", _self.$feat);
                                 }
                                 _self.emit("connect", _self.options.host, _self.options.port);
@@ -310,7 +307,9 @@ Util.inherits(Ftp, EventEmitter);
                                 _self.$executeNext(makeError(code, text));
                             break;
                         case 1:
-                            if (code >= 211 && code <= 215)
+                            if (code === 213)
+                                _self.$executeNext(_self.$getLines(text));
+                            else if (code >= 211 && code <= 215)
                                 _self.$executeNext(text);
                             else
                                 _self.$executeNext(makeError(code, text));
@@ -665,33 +664,16 @@ Util.inherits(Ftp, EventEmitter);
     this.stat = this.lstat = this.fstat = function(path, callback) {
         var _self = this;
         this.$changeToPath(path, function(path, node) {
-            /*_self.send("STAT", node, function(err, stat) {
+            _self.send("STAT", path, function(err, results) {
                 if (err)
                     return callback(err);
-                console.log("STAT..................", arguments);
-                callback(null, stat);
-            });*/
-            _self.list(EMPTY_PATH, function(err, emitter) {
-                if (err)
-                    return callback(err);
-
-                var list = [];
-                emitter.on("entry", function(entry) {
-                    entry = new Stat(entry);
-                    if (entry.name === node)
-                        list.push(entry);
-                });
-
-                emitter.on("error", function(err) { // Under normal circumstances this shouldn"t happen.
-                    _self.$socket.end();
-                    callback("Error during LIST(): " + Util.inspect(err));
-                });
-
-                emitter.on("success", function() {
-                    if (list.length === 0)
-                        return callback("File " + node + " at location " + path + " not found");
-                    callback(null, list[0]);
-                });
+                
+                for (var l=results.entry.length; --l > -1;) {
+                    if (results.entry[l].name == node)
+                        return callback(null, new Stat(results.entry[l]));
+                }
+                
+                callback(new Error("File " + node + " at location " + path + " was not found"));
             });
         });
     };
@@ -1016,6 +998,32 @@ Util.inherits(Ftp, EventEmitter);
         }
         
         return true;
+    };
+    
+    this.$getLines = function(data) {
+        var parsed = {
+            entry: [],
+            raw: []
+        };
+        if (RE_NEWLINE.test(data)) {
+            if (data[data.length-1] === "\n") {
+                lines = data.split(RE_NEWLINE);
+                data = "";
+            } else {
+                var pos = data.lastIndexOf("\r\n");
+                if (pos === -1)
+                    pos = data.lastIndexOf("\n");
+                lines = data.substring(0, pos).split(RE_NEWLINE);
+                data = data.substring(pos + 1);
+            }
+            for (var results = Parser.processDirLines(lines, "LIST"), i = 0; i < results.length; i++) {
+                if (debug)
+                    debug("(STAT) Got line: " + results[i][2]);
+                
+                parsed[results[i][0]].push(results[i][1]);
+            }
+            return parsed;
+        }
     };
 
     /**

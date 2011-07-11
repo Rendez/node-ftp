@@ -204,7 +204,8 @@ var parsers = {
             var date = new Date(group[19] + " " + group[20]).getTime();
             var name = group[21];
             var endtoken = group[22];
-        }
+        } else
+            return null;
 
         var pos = name.indexOf(' -> ');
         if (pos > -1) {
