@@ -49,7 +49,6 @@
   * Implements several advanced commands and extensions: SYST, STAT, CHMOD, SIZE, MDTM, IDLE, NOOP
   * Connection persistance using either NOOP if server implements it or LIST
   * Pre-implementation to deal with servers timezone's hour difference
-  * Dynamic view helpers
   * Buffers are used in GET/PUT/APPEND instead of file streams
   * CWD is issued before relevant commands solving any problems with absolute paths containing whitespaces
   * High focus on performance and fast queuing
