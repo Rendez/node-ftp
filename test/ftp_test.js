@@ -11,9 +11,9 @@ var Ftp = require("../ftp");
 var Fs = require("fs");
 
 var FTPCredentials = {
-    host: "ftp.merino.ws",
-    username: "lmerino",
-    passwd: "root1234",
+    host: "",
+    username: "",
+    passwd: "",
     port: 21
 };
 
