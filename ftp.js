@@ -32,8 +32,7 @@ var Ftp = module.exports = function(options) {
         /*secure: false,*/
         connTimeout: 10000, // in ms
         debug: false/*,
-        active: false*/ // if numerical, is the port number, otherwise should be false
-        // to indicate use of passive mode
+        active: false*/ // if numerical, is the port number, otherwise should be false to indicate use of passive mode
     }, options);
     // Set TimeZone hour difference to get the server's LIST time offset
     this.TZHourDiff = this.options.TZHourDiff || 0;
@@ -47,7 +46,7 @@ var Ftp = module.exports = function(options) {
     else if (Ftp.debugMode)
         debug = function(text){ console.info(text); };
     else
-        debug = function(){}
+        debug = function(){};
 };
 
 Ftp.debugMode = false;
@@ -57,9 +56,8 @@ Util.inherits(Ftp, EventEmitter);
 (function() {
     
     var RE_NEWLINE = /\r\n|\n/;
-    var EMPTY_PATH = "";
     
-    function makeError(code, text) {
+    function makeError(code, text, type) {
         var err = new Error("Server Error: " + code + (text ? " " + text : ""));
         err.code = code;
         err.text = text;
@@ -103,11 +101,13 @@ Util.inherits(Ftp, EventEmitter);
             if (parts.length > 1) {
                 node = parts.pop();
                 path = "/" + parts.join("/");
-            } else {
+            }
+            else {
                 path = "/";
                 node = parts.pop();
             }
-        } else if (path.charAt(0) != "/")
+        }
+        else if (path.charAt(0) != "/")
             path = "/" + path;
         
         if (path == this.currentCwd)
@@ -131,9 +131,10 @@ Util.inherits(Ftp, EventEmitter);
             this.$socket.end();
         if (this.$dataSock)
             this.$dataSock.end();
-
-        this.$socket   = null;
-        this.$dataSock = null;
+        
+        this.$socket = this.$dataSock = null;
+        this.$queue = [];
+        clearTimeout(this.idleTimeout);
     };
 
     /**
@@ -157,8 +158,6 @@ Util.inherits(Ftp, EventEmitter);
 
         this.$feat = {};
 
-        if (socket)
-            socket.end();
         if (this.$dataSock)
             this.$dataSock.end();
 
@@ -190,7 +189,6 @@ Util.inherits(Ftp, EventEmitter);
             if (debug) debug("Disconnected");
             if (_self.$dataSocket)
                 self.$dataSocket.end();
-            _self.emit("end");
         });
 
         socket.on("close", function(hasError) {
@@ -226,7 +224,6 @@ Util.inherits(Ftp, EventEmitter);
                         ));
                     });
                 }
-
                 var i, code, text, group;
                 var len = resps.length;
                 for (i=0; i < len; ++i) {
@@ -308,7 +305,7 @@ Util.inherits(Ftp, EventEmitter);
                             break;
                         case 1:
                             if (code === 213)
-                                _self.$executeNext(_self.$getLines(text));
+                                _self.$executeNext(_self.$parseLines(text));
                             else if (code >= 211 && code <= 215)
                                 _self.$executeNext(text);
                             else
@@ -323,7 +320,7 @@ Util.inherits(Ftp, EventEmitter);
                                 var parsed = text.match(/([\d]+),([\d]+),([\d]+),([\d]+),([-\d]+),([-\d]+)/);
 
                                 if (!parsed)
-                                    throw new Error("Could not parse passive mode response: " + text);
+                                    return _self.emit("error", new Error("Could not parse passive mode response: " + text));
 
                                 _self.$pasvIP = parsed[1] + "." + parsed[2] + "." + parsed[3] + "." + parsed[4];
                                 _self.$pasvPort = (parseInt(parsed[5]) * 256) + parseInt(parsed[6]);
@@ -364,7 +361,7 @@ Util.inherits(Ftp, EventEmitter);
                     }
                 }
                 // Run next command in the queue, if any...
-                if (processNext) _self.send();
+                //if (processNext) _self.send();
             }
         });
     };
@@ -386,33 +383,26 @@ Util.inherits(Ftp, EventEmitter);
             callback = user;
             user = "anonymous";
             password = "anonymous@";
-        } else if (_.isFunction(password)) {
+        }
+        else if (_.isFunction(password)) {
             callback = password;
             password = "anonymous@";
         }
 
-        var cmds = [["USER", user], ["PASS", password]];
-        var cur = 0;
         var _self = this;
-        var next = function(err, result) {
+        this.send("USER", user, function(err, res) {
             if (err)
                 return callback(err);
+            
+            _self.send("PASS", password, function(err, res) {
+                if (err)
+                    return callback(err);
 
-            if (result === true) {
-                if (!_self.send(cmds[cur][0], cmds[cur][1], next))
-                    return callback(new Error("Connection severed"));
-                ++cur;
-            } else if (result === false) { // logged in
-                cur = 0;
                 _self.$state = "authorized";
-                if (!_self.send("TYPE", "I", callback))
-                    return callback(new Error("Connection severed"));
-            }
-        };
-
-        this.emit("auth");
-        next(null, true);
-        return true;
+                //_self.emit("auth");
+                _self.send("TYPE", "I", callback);
+            });
+        });
     };
 
     /**
@@ -422,12 +412,10 @@ Util.inherits(Ftp, EventEmitter);
      * @type {Boolean}
      */
     this.pwd = function(callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            this.send("PWD", callback)
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        this.send("PWD", callback)
     };
 
     /**
@@ -438,52 +426,56 @@ Util.inherits(Ftp, EventEmitter);
      * @type {Boolean}
      */
     this.cwd = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            this.send("CWD", path, callback);
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        this.send("CWD", path, callback);
     };
 
     /**
-     * Copy one file from the remote machine to the local machine.
+     * Get file contents from the remote machine to the local machine.
      *
      * @param {String} path to which change
      * @param {Function} callback
      * @type {Boolean}
      */
     this.get = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            return this.send("PASV", function(err, stream) {
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("PASV", function(err, stream) {
                 if (err)
                     return callback(err);
 
-                _self.$changeToPath(path, function(path, node) {
-                    var buffers = [];
-
-                    stream.on("data", function(buffer) {
-                        buffers.push(buffer);
-                    });
-
-                    stream.on("end", function() {
-                        callback(null, Utils.concatBuffers(buffers));
-                    });
-
-                    var result = _self.send("RETR", node, function(err) {
-                        if (err)
-                            return callback(err);
-                    });
-
-                    if (!result)
-                        callback(new Error("Connection severed"));
+                var buffers = [];
+                stream.on("data", function(buffer) {
+                    buffers.push(buffer);
+                });
+                
+                var file;
+                var timer;
+                stream.on("end", function() {
+                    file = Utils.concatBuffers(buffers);
+                    timer = setInterval(function() {
+                        if (complete) {
+                            clearInterval(timer);
+                            callback(null, file);
+                        }
+                    }, 100);
+                });
+                
+                var complete = false;
+                _self.send("RETR", node, function(err) {
+                    if (err) {
+                        clearInterval(timer);
+                        return callback(err);
+                    }
+                    complete = true;
                 });
             });
-        }
+        });
     };
 
     /**
@@ -496,29 +488,24 @@ Util.inherits(Ftp, EventEmitter);
      * @type {Boolean}
      */
     this.put = function(buffer, destpath, callback, append) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            if (!Buffer.isBuffer(buffer))
-                throw new Error("Write data must be an instance of Buffer");
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+    
+        if (!Buffer.isBuffer(buffer))
+            throw new Error("Write data must be an instance of Buffer");
 
-            var _self = this;
-            return this.send("PASV", function(err, stream) {
+        var _self = this;
+        this.$changeToPath(destpath, function(path, node) {
+            _self.send("PASV", function(err, stream) {
                 if (err)
                     return callback(err);
 
-                _self.$changeToPath(destpath, function(path, node) {
-                    var res = _self.send(append ? "APPE" : "STOR", node, callback);
-                    stream.write(buffer, function() {
-                        stream._shutdown();
-                    });
-
-                    if (!res)
-                        callback(new Error("Connection severed"));
+                var res = _self.send(append ? "APPE" : "STOR", node, callback);
+                stream.write(buffer, function() {
+                    stream._shutdown();
                 });
             });
-        }
+        });
     };
 
     /**
@@ -536,12 +523,11 @@ Util.inherits(Ftp, EventEmitter);
      * Copy remote location to another remote location (not implemented).
      */
     this.copy = function(origpath, destpath, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else
-            //@todo dir copy involves deep recursive copying
-            callback();
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        //@todo dir copy involves deep recursive copying
+        callback();
     };
 
     /**
@@ -552,15 +538,13 @@ Util.inherits(Ftp, EventEmitter);
      */
 
     this["delete"] = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            this.$changeToPath(path, function(path, node) {
-                _self.send("DELE", node, callback);
-            });
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("DELE", node, callback);
+        });
     };
 
     /**
@@ -571,21 +555,16 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.rename = function(pathFrom, pathTo, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            if (!_self.send("RNFR", pathFrom, function(err) {
-                    if (err)
-                        return callback(err)
-           
-                    if (!_self.send("RNTO", pathTo, callback))
-                        callback(new Error("Connection severed"));
-                })
-            )
-                callback(new Error("Connection severed"));
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        var _self = this;
+        this.send("RNFR", pathFrom, function(err) {
+            if (err)
+                return callback(err)
+   
+            _self.send("RNTO", pathTo, callback);
+        })
     };
 
     /**
@@ -595,15 +574,13 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.mkdir = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            this.$changeToPath(path, function(path, node) {
-                _self.send("MKD", node, callback);
-            });
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("MKD", node, callback);
+        });
     };
 
     /**
@@ -613,17 +590,37 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.rmdir = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            this.$changeToPath(path, function(path, node) {
-                _self.send("RMD", node, callback);
-            });
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("RMD", node, callback);
+        });
     };
 
+    /**
+     * Gives the current stat of a node specified in path. Returns a single struct object.
+     *
+     * @param {String} path of node
+     * @param {Function} callback
+     */
+    this.lstat = this.fstat = this.stat = function(path, callback) {
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("STAT", path/* == "/" ? path : node*/, function(err, results) {
+                if (err)
+                    return callback(err);
+                
+                for (var l=results.entry.length; --l > -1;) {
+                    if (results.entry[l].name == node)
+                        return callback(null, new Stat(results.entry[l]));
+                }
+                callback(new Error("File " + node + " at location " + path + " was not found"));
+            });
+        });
+    };
+    
     /**
      * Forward method to read a directory listing and return an array of nodes.
      *
@@ -633,146 +630,91 @@ Util.inherits(Ftp, EventEmitter);
     this.readdir = function(path, callback) {
         if (debug) debug("READ DIR " + path);
         var _self = this;
+        
         this.$changeToPath(path, function(path, node) {
-            _self.list(EMPTY_PATH, function(err, emitter) {
-                if (err)
-                    return callback(err);
-
-                var nodes = [];
-                emitter.on("entry", function(entry) {
-                    nodes.push(new Stat(entry));
-                });
-
-                emitter.on("error", function(err) {
-                    _self.$socket.end();
-                    callback("Error during LIST(): " + Util.inspect(err));
-                });
-
-                emitter.on("success", function() {
-                    callback(null, nodes);
-                });
-            });
+            _self.retrLines(callback);
         }, true);
     };
 
     /**
-     * Gives the current stat of a node specified in path. Returns a single struct object.
-     *
-     * @param {String} path of node
-     * @param {Function} callback
-     */
-    this.stat = this.lstat = this.fstat = function(path, callback) {
-        var _self = this;
-        this.$changeToPath(path, function(path, node) {
-            _self.send("STAT", path, function(err, results) {
-                if (err)
-                    return callback(err);
-                
-                for (var l=results.entry.length; --l > -1;) {
-                    if (results.entry[l].name == node)
-                        return callback(null, new Stat(results.entry[l]));
-                }
-                
-                callback(new Error("File " + node + " at location " + path + " was not found"));
-            });
-        });
-    };
-
-    /**
-     * Syntax: LIST [remote-filespec]
+     * Syntax for list: LIST [remote-filespec]
      * If remote-filespec refers to a file, sends information about that file. If remote-filespec refers to a directory,
      * sends information about each file in that directory. remote-filespec defaults to the current directory.
      * This command must be preceded by a PORT or PASV command.
      *
-     * @param {String} path of node
+     * @param {String} full path
      * @param {Function} callback
      */
-    this.list = function(path, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
+    this.retrLines = function(path, callback) {
+        if (_.isFunction(path)) {
+            callback = path;
+            path = null;
         }
-        else {
-            if (_.isFunction(path)) {
-                callback = path;
-                path = null;
-            }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
 
-            var _self = this;
-            var emitter = new EventEmitter();
+        var _self = this;
+        /*if (params = this.$feat['MLST']) { // @todo needs to be rebuilt
             var params;
-
-            /*if (params = this.$feat['MLST']) {
-                var type = undefined,
-                cbTemp = function(err, text) {
-                    if (err) {
-                        if (!type && err.code === 550) { // path was a file not a dir.
-                            type = 'file';
-                            if (!self.send('MLST', path, cbTemp))
-                                return callback(new Error('Connection severed'));
-                            return;
-                        } else if (!type && err.code === 425) {
-                            type = 'pasv';
-                            if (!self.$pasvGetLines(emitter, 'MLSD', cbTemp))
-                                return callback(new Error('Connection severed'));
-                            return;
-                        }
-                        if (type === 'dir')
-                            return emitter.emit('error', err);
-                        else
-                            return callback(err);
+            var type = undefined,
+            cbTemp = function(err, text) {
+                if (err) {
+                    if (!type && err.code === 550) { // path was a file not a dir.
+                        type = 'file';
+                        if (!self.send('MLST', path, cbTemp))
+                            return callback(new Error('Connection severed'));
+                        return;
+                    } else if (!type && err.code === 425) {
+                        type = 'pasv';
+                        if (!self.$pasvRetrLines(emitter, 'MLSD', cbTemp))
+                            return callback(new Error('Connection severed'));
+                        return;
                     }
-                    if (type === 'file') {
-                        callback(undefined, emitter);
-                        var lines = text.split(/\r\n|\n/), result;
-                        lines.shift();
-                        lines.pop();
-                        lines.pop();
-                        result = Parser.parseMList(lines[0]);
-                        emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
-                        emitter.emit('end');
-                        emitter.emit('success');
-                    } else if (type === 'pasv') {
-                        type = 'dir';
-                        if (path)
-                            r = self.send('MLSD', path, cbTemp);
-                        else
-                            r = self.send('MLSD', cbTemp);
-                        if (r)
-                            callback(undefined, emitter);
-                        else
-                            callback(new Error('Connection severed'));
-                    } else if (type === 'dir')
-                            emitter.emit('success');
-                };
-                if (path)
-                    return this.send('MLSD', path, cbTemp);
-                else
-                    return this.send('MLSD', cbTemp);
-            } else {*/
-                // Otherwise use the standard way of fetching a listing
-                this.$pasvGetLines(emitter, "LIST", function(err) {
-                    if (err)
+                    if (type === 'dir')
+                        return emitter.emit('error', err);
+                    else
                         return callback(err);
-
-                    var result;
-                    var cbTemp = function(err) {
-                        if (err)
-                            return emitter.emit("error", err);
-                        emitter.emit("success");
-                    };
-
+                }
+                if (type === 'file') {
+                    callback(undefined, emitter);
+                    var lines = text.split(/\r\n|\n/), result;
+                    lines.shift();
+                    lines.pop();
+                    lines.pop();
+                    result = Parser.parseMList(lines[0]);
+                    emitter.emit((typeof result === 'string' ? 'raw' : 'entry'), result);
+                    emitter.emit('end');
+                    emitter.emit('success');
+                } else if (type === 'pasv') {
+                    type = 'dir';
                     if (path)
-                        result = _self.send("LIST", path, cbTemp);
+                        r = self.send('MLSD', path, cbTemp);
                     else
-                        result = _self.send("LIST", cbTemp);
-
-                    if (result)
-                        callback(null, emitter);
+                        r = self.send('MLSD', cbTemp);
+                    if (r)
+                        callback(undefined, emitter);
                     else
-                        callback(new Error("Connection severed"));
-                });
-            //}
-        }
+                        callback(new Error('Connection severed'));
+                } else if (type === 'dir')
+                        emitter.emit('success');
+            };
+            if (path)
+                this.send('MLSD', path, cbTemp);
+            else
+                this.send('MLSD', cbTemp);
+        } else {*/
+            /** Otherwise use the standard way of fetching a listing */
+            this.$pasvRetrLines(path, "LIST", function(err, results) {
+                if (err)
+                    return callback(err);
+                
+                var nodes = [];
+                for (var l=results.entry.length; --l > -1;)
+                    nodes.push(new Stat(results.entry[l]));
+                
+                callback(null, nodes);
+            });
+        /*}*/
     };
 
     /**
@@ -786,12 +728,10 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.system = function(callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            this.send("SYST", callback);
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        this.send("SYST", callback);
     };
 
     /**
@@ -800,12 +740,10 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.status = function(callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            this.send("STAT", callback);
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        this.send("STAT", callback);
     };
 
     /**
@@ -816,15 +754,13 @@ Util.inherits(Ftp, EventEmitter);
      * @param {Function} callback
      */
     this.chmod = function(path, mode, callback) {
-        if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
-        }
-        else {
-            var _self = this;
-            this.$changeToPath(path, function(path, node) {
-                _self.send("SITE CHMOD", [mode, node].join(" "), callback);
-            });
-        }
+        if (this.$state !== "authorized")
+            return callback(new Error("Unauthorized"));
+        
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("SITE CHMOD", [mode, node].join(" "), callback);
+        });
     };
 
     /**
@@ -835,17 +771,15 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.size = function(path, callback) {
         if (this.$state !== "authorized") {
-            callback(new Error("Unauthorized"));
+            return callback(new Error("Unauthorized"));
         }
         else if (!this.$feat["SIZE"]) {
-            callback(new Error("This server doesn't support the SIZE command"));
+            return callback(new Error("This server doesn't support the SIZE command"));
         }
-        else {
-            var _self = this;
-            this.$changeToPath(path, function(path, node) {
-                _self.send("SIZE", node, callback);
-            });
-        }
+        var _self = this;
+        this.$changeToPath(path, function(path, node) {
+            _self.send("SIZE", node, callback);
+        });
     };
 
     /**
@@ -904,7 +838,7 @@ Util.inherits(Ftp, EventEmitter);
                 if (err)
                     return callback(err);
 
-                if (!RE_MDTM_TIME.test(text)) {
+                if (!RE_MDTM_TIME.test(text = text.replace(/\s*/, ""))) {
                     return callback(
                         new Error("Invalid date/time format from server"));
                 }
@@ -938,11 +872,13 @@ Util.inherits(Ftp, EventEmitter);
      * For this reaason, LIST is being used.
      */
     this.noop = function(callback) {
-        if (this.$state !== "authorized"/* || !this.$feat["NOOP"]*/)
+        if (this.$state !== "authorized")
             return callback(new Error("Not authorized"));
         
-        /*this.send("NOOP", callback);*/
-        this.list("", callback);
+        if (this.$feat["NOOP"])
+            this.send("NOOP", callback);
+        else
+            this.retrLines(callback);
     };
 
     /**
@@ -971,7 +907,7 @@ Util.inherits(Ftp, EventEmitter);
      */
     this.send = function(cmd, params, callback) {
         if (!this.$socket || !this.$socket.writable)
-            return false;
+            return;
 
         if (cmd) {
             cmd = ("" + cmd).toUpperCase();
@@ -981,7 +917,7 @@ Util.inherits(Ftp, EventEmitter);
                 params = null;
             }
             
-            if (!params || params == EMPTY_PATH)
+            if (!params)
                 this.$queue.push([cmd, callback]);
             else
                 this.$queue.push([cmd, params, callback]);
@@ -996,11 +932,9 @@ Util.inherits(Ftp, EventEmitter);
             
             persistConnection.call(this);
         }
-        
-        return true;
     };
     
-    this.$getLines = function(data) {
+    this.$parseLines = function(data) {
         var parsed = {
             entry: [],
             raw: []
@@ -1017,67 +951,55 @@ Util.inherits(Ftp, EventEmitter);
                 data = data.substring(pos + 1);
             }
             for (var results = Parser.processDirLines(lines, "LIST"), i = 0; i < results.length; i++) {
-                if (debug)
-                    debug("(STAT) Got line: " + results[i][2]);
-                
+                //if (debug) debug("(STAT/LIST) Got line: " + results[i][2]);
                 parsed[results[i][0]].push(results[i][1]);
             }
             return parsed;
         }
+        
+        return data;
     };
 
     /**
      * Sends a PASV command to initialize the data socket and prepare it
-     * for transfers from a LIST command.
+     * for transfers from a List type of command.
      *
      * @param {Object} event emitter as delegation object
      * @param {String} type of listing command used, usually LIST or MLSD
      * @param {Function} callback
      * @type {Boolean}
      */
-    this.$pasvGetLines = function(emitter, type, callback) {
-        return this.send("PASV", function(err, stream) {
+    this.$pasvRetrLines = function(path, type, callback) {
+        var _self = this;
+        
+        this.send("PASV", function(err, stream) {
             if (err)
                 return callback(err);
-            else if (!emitter)
-                return emitter.emit("error", new Error("Connection severed"));
-            else if (!stream || !stream.readable)
+            if (!stream || !stream.readable)
                 return callback(new Error("Stream not readable"));
-
-            var curData = "";
-            var lines;
+            
             stream.setEncoding("utf8");
-            // Note: stream will start transfering by cmd 'LIST'
+            var lines;
+            var parsed = {
+                entry: [],
+                raw: []
+            };
+            
             stream.on("data", function(data) {
-                curData += data;
-                if (RE_NEWLINE.test(curData)) {
-                    if (curData[curData.length-1] === "\n") {
-                        lines = curData.split(RE_NEWLINE);
-                        curData = "";
-                    } else {
-                        var pos = curData.lastIndexOf("\r\n");
-                        if (pos === -1)
-                            pos = curData.lastIndexOf("\n");
-                        lines = curData.substring(0, pos).split(RE_NEWLINE);
-                        curData = curData.substring(pos + 1);
-                    }
-                    for (var results = Parser.processDirLines(lines, type), i = 0; i < results.length; i++) {
-                        if (debug)
-                            debug("(PASV) Got " + type + " line: " + results[i][2]);
-                        emitter.emit(results[i][0]/*event*/, results[i][1]/*result*/);
-                    }
-                }
+                lines = _self.$parseLines(data);
+                _.extend(parsed, _.isObject(lines) ? lines : {});
             });
-
-            stream.on("end", function() {
-                emitter.emit("end");
-            });
-
+            
             stream.on("error", function(err) {
-                emitter.emit("error", err);
+                continueStack(err) && _self.emit("error");
             });
-
-            callback();
+            
+            function continueStack(err) { callback(err, parsed); }
+            
+            if (path)
+                _self.send(type, path, continueStack)
+            else
+                _self.send(type, continueStack);
         });
     };
 
@@ -1093,15 +1015,13 @@ Util.inherits(Ftp, EventEmitter);
 
         var _self = this;
         var pasvTimeout = setTimeout(function() {
-            var result = _self.send("ABOR", function(err) {
+            _self.send("ABOR", function(err) {
                 if (err)
                     return _self.$executeNext(err);
                 _self.$dataSock.destroy();
                 _self.$dataSock = _self.$pasvPort = _self.$pasvIP = null;
                 _self.$executeNext(new Error("(PASV) Data connection timed out while connecting"));
             });
-            if (!result)
-                _self.$executeNext(new Error("Connection severed"));
         }, this.options.connTimeout);
 
         if (debug) debug("(PASV) About to attempt data connection to: " + this.$pasvIP + ":" + this.$pasvPort);
@@ -1149,16 +1069,12 @@ Util.inherits(Ftp, EventEmitter);
         if (!callback)
             return false;
 
-        if (result instanceof Error) {
-            process.nextTick(function() {
-                callback(result);
-            });
-        } else if (typeof result !== "undefined") {
-            process.nextTick(function() {
-                callback(undefined, result);
-            });
-        } else
-            process.nextTick(callback);
+        if (result instanceof Error)
+            callback(result);
+        else if (typeof result !== "undefined") {
+            callback(null, result);
+        else
+            callback();
     };
 
     var Stat = function(struct) {
@@ -1224,11 +1140,14 @@ var Utils = {
         var length = 0;
         var index  = 0;
 
-        if (!_.isArray(bufs))
+        if (!Array.isArray(bufs))
             bufs = Array.prototype.slice.call(arguments);
 
         for (var i = 0, l = bufs.length; i < l; ++i) {
             buffer = bufs[i];
+            if (!buffer)
+                continue;
+
             if (!Buffer.isBuffer(buffer))
                 buffer = bufs[i] = new Buffer(buffer);
             length += buffer.length;

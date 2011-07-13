@@ -13,29 +13,18 @@ var Fs = require("fs");
 var FTPCredentials = {
     host: "ftp.merino.ws",
     username: "lmerino",
-    passwd: "buscar123",
+    passwd: "root1234",
     port: 21
 };
 
-// Execution ORDER: test.setUpSuite, setUp, testFn, tearDown, test.tearDownSuite
+Ftp.debugMode = true;
+
+// Execution ORDER: setUpSuite, setUp, testFn, tearDown, tearDownSuite
 module.exports = {
     
     timeout: 10000,
     
-    /*setUpSuite: function() {
-        var dummy = {
-            host: "ftp.secureftp-test.com",
-            user: "test",
-            pass: "test",
-            port: 21,
-            connTimeout: 10000,
-            debug: true
-        };
-        this.dflt = new Ftp(dummy).connect();
-        this.dflt.on("connect", next);
-    },*/
-    
-    setUp: function(next) {
+    setUpSuite: function(next) {
         if (this.conn)
             this.conn.end();
         this.$initial = "/c9";
@@ -43,13 +32,15 @@ module.exports = {
         next();
     },
     
-    tearDown: function(next) {
+    tearDownSuite: function(next) {
         this.conn.end();
         next();
     },
     /** Note: basically all tests can ass<ume user is authorized after this,
       * because checkings are done in each required FTP method */
     "test ftp auth": function(next) {
+        if (this.conn.$socket)
+            return next();
         var self = this;
         this.conn.on("connect", function() {
             self.conn.auth(FTPCredentials.username, FTPCredentials.passwd, function(err) {
@@ -95,24 +86,21 @@ module.exports = {
         this["test ftp auth"](afterConnect);
     },
     
-    "test ftp cwd and upload non-binary file": function(next) {
+    "test ftp change working directory and upload non-binary file to it": function(next) {
         var self = this,
-            destpath = "foo.txt";
+            filename = "foo.txt";
         
         function afterConnect() {
             var newDir = self.$initial + "/" + "files";
-            self.conn.cwd(newDir, function(err) {
+            var instream = new Buffer("sample data", "utf8");
+            self.conn.put(instream, newDir + "/" + filename, function(err) {
                 assert.ok(!err);
-                var instream = new Buffer("sample data", "utf8");
-                self.conn.put(instream, destpath, function(err) {
+                self.conn.stat(newDir + "/" + filename, function(err, stat) {
                     assert.ok(!err);
-                    self.conn.stat(destpath, function(err, stat) {
-                        assert.ok(!err);
-                        assert.equal(stat.name, destpath);
-                        assert.ok(stat.isFile());
-                        next();
-                    }, true);
-                });
+                    assert.equal(stat.name, filename);
+                    assert.ok(stat.isFile());
+                    next();
+                }, true);
             });
         }
         this["test ftp auth"](afterConnect);
@@ -125,18 +113,17 @@ module.exports = {
         
         function afterConnect() {
             var newDir = self.$initial + "/" + "files";
-            var instream = Fs.readFile(localpath, "binary", afterReadFile);
-            function afterReadFile(err, data) {
+            Fs.readFile(localpath, "binary", function(err, data) {
                 assert.ok(!err);
-                self.conn.put(new Buffer(data, "binary"), destpath, function(err) {
+                self.conn.put(new Buffer(data, "binary"), newDir + "/" + destpath, function(err) {
                     assert.ok(!err);
-                    self.conn.size(destpath, function(err, size) {
+                    self.conn.size(newDir + "/" + destpath, function(err, size) {
                         assert.ok(!err);
                         assert.equal(size, Fs.statSync(localpath).size);
                         next();
                     });
                 });
-            }
+            });
         }
         this["test ftp auth"](afterConnect);
     },
@@ -171,9 +158,9 @@ module.exports = {
                 self.conn.readdir(path, function(err, files) {
                     assert.ok(!err);
                     for (var i=0; i < files.length; i++) {
-                        assert.ok(fileListNames.indexOf(files[i].name));
-                        if (i === files.length-1)
-                            next();
+                        assert.ok(fileListNames.indexOf(files[i].name) != -1);
+                        if (i == files.length-1)
+                            return next();
                     }
                 });
             });
@@ -184,21 +171,13 @@ module.exports = {
     "test ftp get file": function(next) {
         var self = this,
             path = self.$initial + "/" + "files/logo.png",
-            localPath = "./fixtures/logo.png",
-            localPathNew = "./fixtures/downloaded_logo.png";
+            localPath = "./fixtures/logo.png";
         
         function afterConnect() {
-            var outstream = Fs.createWriteStream(localPathNew);
-            self.conn.get(path, function(err, instream) {
+            self.conn.get(path, function(err, buffer) {
                 assert.ok(!err);
-                instream.on("error", function() {
-                    assert.fail();
-                });
-                instream.on("success", function() {
-                    assert.equal(Fs.statSync(localPath).size, Fs.statSync(localPath).size);
-                    next();
-                });
-                instream.pipe(outstream);
+                assert.equal(buffer.length, Fs.statSync(localPath).size);
+                next();
             });
         }
         this["test ftp auth"](afterConnect);
